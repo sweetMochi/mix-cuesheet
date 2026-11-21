@@ -29,3 +29,7 @@ spec 沒有記錄和其他後端語言的正式比較；最容易被提出的替
 - `shazamio` 使用非官方 Shazam API，隨時可能被限流或改版。辨識器以介面隔離，替換實作時不需要動到任務執行器；但如果之後改用沒有 Python 版本的辨識服務，選用 Python 的主要理由就不存在了，到時候應重新評估這份 ADR
 - 啟動腳本只接受 Python 3.14（[start.ps1](../../start.ps1) 的 `Find-Python`），升級 Python 版本前要先確認 `shazamio-core` 的原生擴充在新版本下可以安裝
 - 環境管理採用 Python 內建的 `venv` 加 `pip`，依賴在 `requirements.txt` 以 `==` 鎖定版本，不使用 uv
+
+## 後續評估
+
+2026-11-22 評估過改用 Node.js，實測結果見 [後端執行環境實測記錄](../spikes/2026-11-22-backend-runtime/README.md)。是否改用尚未決定
