@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runAnalysis, type AnalysisEvent, type AnalysisSettings } from '../src/analysis-runner.ts';
+import { runAnalysis, type AnalysisEvent, type AnalysisPhase, type AnalysisSettings } from '../src/analysis-runner.ts';
 import type { Cuesheet } from '../src/cuesheet.ts';
 import { AudioSourceError } from '../src/audio-source.ts';
 import type { Sleep } from '../src/recognition-scheduler.ts';
@@ -45,6 +45,12 @@ interface AnalyzeOptions {
   settings?: Partial<AnalysisSettings>;
   /** 預設為立即返回的等待 */
   sleep?: Sleep;
+  /** 預設為 `Date.now` */
+  now?: () => number;
+  /** 預設不輸出 */
+  log?: (message: string) => void;
+  /** 每收到一個事件就呼叫，用來在事件之間推進假時鐘 */
+  onEvent?: (event: AnalysisEvent) => void;
 }
 
 async function analyze(
@@ -62,8 +68,11 @@ async function analyze(
     recognizer,
     tempRoot,
     sleep: options.sleep ?? instantSleep().sleep,
+    now: options.now,
+    log: options.log ?? (() => {}),
   })) {
     events.push(event);
+    options.onEvent?.(event);
   }
   return { events, audioSource, recognizer };
 }
@@ -385,6 +394,54 @@ describe('runAnalysis', () => {
 
       expect(calls.toSorted((a, b) => a - b)).toEqual([0, 0, 20, 40, 60]);
       expect(finalRows(events)).toEqual(['00:00 A×4']);
+    });
+  });
+
+  describe('耗時記錄', () => {
+    /** 收到各階段事件時把假時鐘推進該階段的耗時（毫秒），模擬各階段實際花的時間 */
+    function timedRun(
+      durationSeconds: number,
+      phaseMs: Partial<Record<AnalysisPhase, number>>,
+      options: AnalyzeOptions = {},
+    ) {
+      let time = 1_000_000;
+      const messages: string[] = [];
+      const run = analyze(durationSeconds, () => null, {
+        ...options,
+        now: () => time,
+        log: (message) => messages.push(message),
+        onEvent: (event) => {
+          if (event.type === 'phase') {
+            time += phaseMs[event.phase] ?? 0;
+          }
+        },
+      });
+      return { run, messages };
+    }
+
+    it('完成時輸出一行影片長度、片段數，以及總耗時與各階段耗時', async () => {
+      const { run, messages } = timedRun(60, { downloading: 15_400, splitting: 8_000, recognizing: 1_849_000 });
+      await run;
+
+      expect(messages).toEqual(['分析完成：影片 01:00、3 段，總耗時 31:12（下載 00:15、切割 00:08、辨識 30:49）']);
+    });
+
+    it('耗時 1 小時以上時以 H:MM:SS 顯示', async () => {
+      const { run, messages } = timedRun(3723, { downloading: 30_000, splitting: 60_000, recognizing: 2 * 3600_000 });
+      await run;
+
+      expect(messages).toEqual([
+        `分析完成：影片 1:02:03、${planSegments(3723, settings).length} 段，總耗時 2:01:30（下載 00:30、切割 01:00、辨識 2:00:00）`,
+      ]);
+    });
+
+    it('分析失敗時不輸出耗時記錄', async () => {
+      const audioSource = fakeAudioSource({ prepareError: new AudioSourceError('download-failed', '下載音訊失敗') });
+      const { run, messages } = timedRun(60, { downloading: 15_000 }, { audioSource });
+      const { events } = await run;
+
+      expect(events.at(-1)?.type).toBe('error');
+      expect(messages).toEqual([]);
     });
   });
 

@@ -12,6 +12,7 @@ import { buildCuesheet, type Cuesheet, type SegmentResult } from './cuesheet.ts'
 import { defaultSleep, recognizeSegments, type RecognitionOptions, type Sleep } from './recognition-scheduler.ts';
 import type { Recognizer } from './recognizer.ts';
 import { planSegments, type SegmentPlanOptions } from './segment-plan.ts';
+import { formatTimestamp } from './timestamp.ts';
 import type { VideoInfo } from './video-probe.ts';
 
 export type AnalysisPhase = 'downloading' | 'splitting' | 'recognizing';
@@ -42,6 +43,10 @@ export interface AnalysisInput {
   sleep?: Sleep;
   /** 任務暫存資料夾建立在這個資料夾底下；預設為系統的暫存資料夾 */
   tempRoot?: string;
+  /** 取得目前時間（毫秒），用來計算各階段耗時；預設為 `Date.now` */
+  now?: () => number;
+  /** 輸出任務完成時的耗時記錄；預設為 `console.log` */
+  log?: (message: string) => void;
 }
 
 /** 暫存資料夾名稱的前綴 */
@@ -55,11 +60,14 @@ export const WORK_DIR_PREFIX = 'mix-cuesheet-';
 export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<AnalysisEvent, void, undefined> {
   const { video, settings, audioSource, recognizer, signal } = input;
   const segments = planSegments(video.durationSeconds, settings);
+  const now = input.now ?? Date.now;
+  const phaseStartedAt: Record<AnalysisPhase, number> = { downloading: 0, splitting: 0, recognizing: 0 };
   let workDir: string | null = null;
 
   try {
     workDir = await mkdtemp(path.join(input.tempRoot ?? tmpdir(), WORK_DIR_PREFIX));
 
+    phaseStartedAt.downloading = now();
     yield { type: 'phase', phase: 'downloading' };
     let audio: PreparedAudio;
     try {
@@ -69,6 +77,7 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
       return;
     }
 
+    phaseStartedAt.splitting = now();
     yield { type: 'phase', phase: 'splitting' };
     const files: string[] = [];
     try {
@@ -80,6 +89,7 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
       return;
     }
 
+    phaseStartedAt.recognizing = now();
     yield { type: 'phase', phase: 'recognizing' };
     yield { type: 'progress', completed: 0, total: segments.length };
     const results: SegmentResult[] = [];
@@ -97,6 +107,15 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
       yield { type: 'cuesheet', cuesheet: cuesheet() };
     }
 
+    const finishedAt = now();
+    (input.log ?? console.log)(
+      formatTimingSummary({
+        durationSeconds: video.durationSeconds,
+        segmentCount: segments.length,
+        phaseStartedAt,
+        finishedAt,
+      }),
+    );
     yield { type: 'done', cuesheet: cuesheet() };
   } catch (error) {
     yield errorEvent(error, 'unexpected', '分析時發生未預期的錯誤');
@@ -105,6 +124,31 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
       await removeWorkDir(workDir);
     }
   }
+}
+
+/**
+ * 任務完成時的耗時記錄，方便手動驗證時記下實際速度，例如
+ * `分析完成：影片 25:26、77 段，總耗時 31:12（下載 00:15、切割 00:08、辨識 30:49）`
+ *
+ * 總耗時從開始下載算到辨識完成；各項耗時都捨去不足 1 秒的部分，加總可能和總耗時差 1～2 秒
+ */
+function formatTimingSummary(timing: {
+  durationSeconds: number;
+  segmentCount: number;
+  phaseStartedAt: Record<AnalysisPhase, number>;
+  finishedAt: number;
+}): string {
+  const { phaseStartedAt, finishedAt } = timing;
+  const elapsed = (fromMs: number, toMs: number) => formatTimestamp((toMs - fromMs) / 1000);
+  const phases = [
+    `下載 ${elapsed(phaseStartedAt.downloading, phaseStartedAt.splitting)}`,
+    `切割 ${elapsed(phaseStartedAt.splitting, phaseStartedAt.recognizing)}`,
+    `辨識 ${elapsed(phaseStartedAt.recognizing, finishedAt)}`,
+  ];
+  return (
+    `分析完成：影片 ${formatTimestamp(timing.durationSeconds)}、${timing.segmentCount} 段，` +
+    `總耗時 ${elapsed(phaseStartedAt.downloading, finishedAt)}（${phases.join('、')}）`
+  );
 }
 
 function errorEvent(error: unknown, fallbackCode: AnalysisErrorCode, fallbackMessage: string): AnalysisEvent {
