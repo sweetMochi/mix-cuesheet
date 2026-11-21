@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.ts';
+import { unusedJobs } from './fakes.ts';
 import { VideoAccessError } from '../src/video-access.ts';
 import type { ProbeVideo } from '../src/video-probe.ts';
 
@@ -10,6 +11,7 @@ function appWithProbe(probeVideo: ProbeVideo) {
     checkTools: () => [],
     ytDlpVersion: null,
     probeVideo,
+    jobs: unusedJobs,
     frontendDistDir: null,
   });
 }

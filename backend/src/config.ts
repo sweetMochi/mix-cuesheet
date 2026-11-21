@@ -5,6 +5,7 @@
  */
 
 import path from 'node:path';
+import type { SegmentPlanOptions } from './segment-plan.ts';
 
 // --- 伺服器 ---
 
@@ -37,3 +38,10 @@ export const SHAZAM_CONCURRENCY = 2;
 
 /** 遇到限流時的重試次數（指數退避） */
 export const SHAZAM_RETRY_ATTEMPTS = 3;
+
+/** 切段規劃使用的參數；預估片段數與實際切段共用 */
+export const SEGMENT_PLAN: SegmentPlanOptions = {
+  segmentSeconds: SEGMENT_SECONDS,
+  stepSeconds: STEP_SECONDS,
+  minSegmentSeconds: MIN_SEGMENT_SECONDS,
+};

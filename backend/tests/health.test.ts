@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.ts';
+import { unusedJobs } from './fakes.ts';
 import { checkTools, type ToolStatus } from '../src/tools.ts';
 
 function appWithTools(...statuses: ToolStatus[]) {
@@ -9,6 +10,7 @@ function appWithTools(...statuses: ToolStatus[]) {
     probeVideo: async () => {
       throw new Error('健康檢查不應該讀取影片');
     },
+    jobs: unusedJobs,
     frontendDistDir: null,
   });
 }

@@ -2,10 +2,14 @@
 
 import { existsSync } from 'node:fs';
 import { serve } from '@hono/node-server';
+import { createAnalysisJobs } from './analysis-jobs.ts';
+import { runAnalysis } from './analysis-runner.ts';
 import { createApp } from './app.ts';
 import * as config from './config.ts';
+import { createShazamRecognizer } from './shazam-recognizer.ts';
 import { checkTools, readYtDlpVersion } from './tools.ts';
 import { probeVideo } from './video-probe.ts';
+import { ytDlpAudioSource } from './ytdlp-audio-source.ts';
 
 const missing = checkTools()
   .filter((tool) => !tool.available)
@@ -21,10 +25,21 @@ if (!existsSync(config.FRONTEND_DIST_DIR)) {
   console.warn('找不到前端 build 的檔案，只提供 API；開發時請另外執行 ng serve');
 }
 
+const recognizer = createShazamRecognizer();
+const jobs = createAnalysisJobs((video) =>
+  runAnalysis({
+    video,
+    settings: config.SEGMENT_PLAN,
+    audioSource: ytDlpAudioSource,
+    recognizer,
+  }),
+);
+
 const app = createApp({
   checkTools,
   ytDlpVersion,
   probeVideo,
+  jobs,
   frontendDistDir: config.FRONTEND_DIST_DIR,
 });
 

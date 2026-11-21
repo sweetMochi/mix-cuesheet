@@ -20,7 +20,7 @@ export const URL_REJECTION_MESSAGES: Record<UrlRejection, string> = {
   'missing-video-id': '網址中找不到影片 ID，請貼上影片頁面的網址',
 };
 
-const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+export const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com']);
 const SHORT_HOSTS = new Set(['youtu.be', 'www.youtu.be']);
