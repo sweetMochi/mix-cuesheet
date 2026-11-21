@@ -2,15 +2,33 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runAnalysis, type AnalysisEvent } from '../src/analysis-runner.ts';
+import { setTimeout as wait } from 'node:timers/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runAnalysis, type AnalysisEvent, type AnalysisSettings } from '../src/analysis-runner.ts';
 import type { Cuesheet } from '../src/cuesheet.ts';
 import { AudioSourceError } from '../src/audio-source.ts';
-import { RateLimitedError, type RecognizedTrack } from '../src/recognizer.ts';
+import type { Sleep } from '../src/recognition-scheduler.ts';
+import { RateLimitedError } from '../src/recognizer.ts';
 import { planSegments } from '../src/segment-plan.ts';
-import { fakeAudioSource, fakeRecognizer, track } from './fakes.ts';
+import {
+  fakeAudioSource,
+  fakeRecognizer,
+  instantSleep,
+  manualSleep,
+  sequence,
+  track,
+  type FakeAudioSource,
+} from './fakes.ts';
 
-const settings = { segmentSeconds: 12, stepSeconds: 20, minSegmentSeconds: 5 };
+const settings: AnalysisSettings = {
+  segmentSeconds: 12,
+  stepSeconds: 20,
+  minSegmentSeconds: 5,
+  concurrency: 2,
+  retryAttempts: 3,
+  backoffBaseMs: 5000,
+  backoffMaxMs: 30000,
+};
 
 let tempRoot: string;
 
@@ -22,19 +40,28 @@ afterEach(async () => {
   await rm(tempRoot, { recursive: true, force: true });
 });
 
+interface AnalyzeOptions {
+  audioSource?: FakeAudioSource;
+  settings?: Partial<AnalysisSettings>;
+  /** 預設為立即返回的等待 */
+  sleep?: Sleep;
+}
+
 async function analyze(
   durationSeconds: number,
-  resultAt: (startSeconds: number) => RecognizedTrack | null,
-  audioSource = fakeAudioSource(),
+  resultAt: Parameters<typeof fakeRecognizer>[0],
+  options: AnalyzeOptions = {},
 ) {
+  const audioSource = options.audioSource ?? fakeAudioSource();
   const recognizer = fakeRecognizer(resultAt);
   const events: AnalysisEvent[] = [];
   for await (const event of runAnalysis({
     video: { videoId: 'dQw4w9WgXcQ', durationSeconds },
-    settings,
+    settings: { ...settings, ...options.settings },
     audioSource,
     recognizer,
     tempRoot,
+    sleep: options.sleep ?? instantSleep().sleep,
   })) {
     events.push(event);
   }
@@ -237,15 +264,128 @@ describe('runAnalysis', () => {
     expect(last(events, 'done')!.cuesheet.rows.map((row) => row.startText)).toEqual(['00:00', '1:00:00']);
   });
 
-  it('辨識器限流或出錯時，該片段視為無結果，任務繼續完成', async () => {
-    const { events } = await analyze(80, (start) => {
-      if (start === 0) throw new RateLimitedError();
-      if (start === 20) throw new Error('network down');
-      return track('A');
+  describe('並行辨識', () => {
+    it('同時進行的辨識請求數不超過設定的並行度', async () => {
+      const { recognizer, events } = await analyze(
+        200,
+        async () => {
+          await wait(1);
+          return null;
+        },
+        { settings: { concurrency: 3 } },
+      );
+
+      expect(recognizer.maxInFlight).toBe(3);
+      expect(recognizer.calls.toSorted((a, b) => a - b)).toEqual([0, 20, 40, 60, 80, 100, 120, 140, 160, 180]);
+      expect(last(events, 'progress')).toEqual({ type: 'progress', completed: 10, total: 10 });
     });
 
-    expect(finalRows(events)).toEqual(['00:00–00:40 未辨識', '00:40 A×2']);
-    expect(last(events, 'progress')).toEqual({ type: 'progress', completed: 4, total: 4 });
+    it('辨識結果亂序完成時，快照仍依開始時間排序，待處理的片段不算無結果', async () => {
+      // 片段 0 最後才完成，20、40、60 先完成
+      const { events } = await analyze(80, async (start) => {
+        if (start === 0) {
+          await wait(1);
+          return track('A');
+        }
+        return start === 60 ? track('B') : null;
+      });
+
+      expect(snapshots(events)).toEqual([
+        // 片段 20 無結果，0 待處理
+        [],
+        // 片段 20、40 無結果；0 待處理，不會和它們連成 00:00 起的區間
+        ['00:20–01:00 未辨識'],
+        ['00:20–01:00 未辨識', '01:00 B×1（僅命中 1 次）'],
+        ['00:00 A×1（僅命中 1 次）', '00:20–01:00 未辨識', '01:00 B×1（僅命中 1 次）'],
+      ]);
+      expect(events.filter((event) => event.type === 'progress').map((event) => event.completed)).toEqual([
+        0, 1, 2, 3, 4,
+      ]);
+    });
+  });
+
+  describe('限流重試', () => {
+    it('限流後以指數退避等待再重試，重試成功時採用該結果', async () => {
+      const at20 = sequence(new RateLimitedError(), new RateLimitedError(), track('A'));
+      const { sleep, delays } = instantSleep();
+
+      const { events, recognizer } = await analyze(60, (start) => (start === 20 ? at20() : track('A')), { sleep });
+
+      expect(finalRows(events)).toEqual(['00:00 A×3']);
+      expect(recognizer.calls.filter((start) => start === 20)).toHaveLength(3);
+      expect(delays).toEqual([5000, 10000]);
+    });
+
+    it('重試用完後該片段視為無結果，任務照常完成', async () => {
+      const { sleep, delays } = instantSleep();
+
+      const { events, recognizer } = await analyze(
+        80,
+        (start) => {
+          if (start === 20) throw new RateLimitedError();
+          return start === 0 ? track('A') : start === 60 ? track('B') : null;
+        },
+        { sleep, settings: { retryAttempts: 4 } },
+      );
+
+      // 片段 20 重試用完、40 無結果，連成一段「未辨識」
+      expect(finalRows(events)).toEqual([
+        '00:00 A×1（僅命中 1 次）',
+        '00:20–01:00 未辨識',
+        '01:00 B×1（僅命中 1 次）',
+      ]);
+      expect(recognizer.calls.filter((start) => start === 20)).toHaveLength(5);
+      // 每次加倍，超過上限時取上限
+      expect(delays).toEqual([5000, 10000, 20000, 30000]);
+      expect(last(events, 'progress')).toEqual({ type: 'progress', completed: 4, total: 4 });
+      expect(events.at(-1)?.type).toBe('done');
+    });
+
+    it('其他辨識錯誤不重試，該片段視為無結果', async () => {
+      const { sleep, delays } = instantSleep();
+
+      const { events, recognizer } = await analyze(
+        80,
+        (start) => {
+          if (start === 20) throw new Error('network down');
+          return start === 40 ? null : track('A');
+        },
+        { sleep },
+      );
+
+      expect(finalRows(events)).toEqual(['00:00 A×2', '00:20–01:00 未辨識']);
+      expect(recognizer.calls.filter((start) => start === 20)).toHaveLength(1);
+      expect(delays).toEqual([]);
+    });
+
+    it('任一片段被限流時，所有請求都等冷卻結束才送出', async () => {
+      const calls: number[] = [];
+      const at0 = sequence(new RateLimitedError(), track('A'));
+      const { sleep, delays, release } = manualSleep();
+
+      const running = analyze(
+        80,
+        async (start) => {
+          calls.push(start);
+          if (start === 0) return at0();
+          if (start === 20) await wait(1);
+          return track('A');
+        },
+        { sleep },
+      );
+
+      // 片段 0 被限流後進入冷卻；片段 20 在冷卻期間完成，但下一個片段 40 要等冷卻結束才送出
+      await vi.waitFor(() => expect(delays).toHaveLength(1));
+      await wait(20);
+      expect(calls).toEqual([0, 20]);
+      expect(delays).toEqual([5000]);
+
+      release();
+      const { events } = await running;
+
+      expect(calls.toSorted((a, b) => a - b)).toEqual([0, 0, 20, 40, 60]);
+      expect(finalRows(events)).toEqual(['00:00 A×4']);
+    });
   });
 
   it('下載失敗時送出錯誤事件，不切割也不辨識', async () => {
@@ -253,7 +393,7 @@ describe('runAnalysis', () => {
       prepareError: new AudioSourceError('download-failed', '下載音訊失敗：這支影片是私人影片'),
     });
 
-    const { events, recognizer } = await analyze(60, () => track('A'), audioSource);
+    const { events, recognizer } = await analyze(60, () => track('A'), { audioSource });
 
     expect(events.at(-1)).toEqual({
       type: 'error',
@@ -268,7 +408,7 @@ describe('runAnalysis', () => {
   it('對應不到的下載錯誤顯示通用訊息並附上原始錯誤', async () => {
     const audioSource = fakeAudioSource({ prepareError: new Error('socket hang up') });
 
-    const { events } = await analyze(60, () => null, audioSource);
+    const { events } = await analyze(60, () => null, { audioSource });
 
     expect(events.at(-1)).toMatchObject({
       type: 'error',
@@ -283,7 +423,7 @@ describe('runAnalysis', () => {
       extractError: new AudioSourceError('split-failed', '切割音訊失敗', 'Invalid data found'),
     });
 
-    const { events, recognizer } = await analyze(60, () => null, audioSource);
+    const { events, recognizer } = await analyze(60, () => null, { audioSource });
 
     expect(events.at(-1)).toEqual({
       type: 'error',
@@ -305,7 +445,7 @@ describe('runAnalysis', () => {
   it('下載失敗後刪除任務暫存資料夾', async () => {
     const audioSource = fakeAudioSource({ prepareError: new Error('boom') });
 
-    await analyze(60, () => null, audioSource);
+    await analyze(60, () => null, { audioSource });
 
     expect(audioSource.workDirs).toHaveLength(1);
     expect(existsSync(audioSource.workDirs[0]!)).toBe(false);
@@ -315,7 +455,7 @@ describe('runAnalysis', () => {
   it('切割失敗後刪除任務暫存資料夾', async () => {
     const audioSource = fakeAudioSource({ extractError: new Error('boom') });
 
-    await analyze(60, () => null, audioSource);
+    await analyze(60, () => null, { audioSource });
 
     expect(await readdir(tempRoot)).toEqual([]);
   });

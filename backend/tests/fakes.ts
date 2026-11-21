@@ -61,21 +61,78 @@ export function fakeAudioSource(options: { prepareError?: unknown; extractError?
   return source;
 }
 
-/** 假的辨識器：依片段的起始秒數回傳結果，函式丟出的錯誤會原樣丟出 */
+export interface FakeRecognizer extends Recognizer {
+  /** 依送出順序記錄每次請求的片段起始秒數，重試也會記錄 */
+  calls: number[];
+  /** 同時進行中的請求數的最大值 */
+  maxInFlight: number;
+}
+
+/**
+ * 假的辨識器：依片段的起始秒數回傳結果，函式丟出的錯誤會原樣丟出
+ *
+ * 函式可以回傳 Promise，用來控制各片段完成的先後
+ */
 export function fakeRecognizer(
-  resultAt: (startSeconds: number) => RecognizedTrack | null,
-): Recognizer & { calls: number[] } {
-  const calls: number[] = [];
-  return {
-    calls,
+  resultAt: (startSeconds: number) => RecognizedTrack | null | Promise<RecognizedTrack | null>,
+): FakeRecognizer {
+  let inFlight = 0;
+  const recognizer: FakeRecognizer = {
+    calls: [],
+    maxInFlight: 0,
     async recognize(segmentFile) {
       const match = /segment-(\d+(?:\.\d+)?)\.wav$/.exec(segmentFile);
       if (match === null) {
         throw new Error(`無法從檔名取得起始秒數：${segmentFile}`);
       }
       const startSeconds = Number(match[1]);
-      calls.push(startSeconds);
-      return resultAt(startSeconds);
+      recognizer.calls.push(startSeconds);
+      inFlight += 1;
+      recognizer.maxInFlight = Math.max(recognizer.maxInFlight, inFlight);
+      try {
+        return await resultAt(startSeconds);
+      } finally {
+        inFlight -= 1;
+      }
     },
+  };
+  return recognizer;
+}
+
+/** 依序回傳結果的函式：第 n 次呼叫取第 n 個，用完後一直取最後一個；值是錯誤時丟出 */
+export function sequence(...outcomes: Array<RecognizedTrack | null | Error>) {
+  let calls = 0;
+  return () => {
+    const outcome = outcomes[Math.min(calls++, outcomes.length - 1)]!;
+    if (outcome instanceof Error) {
+      throw outcome;
+    }
+    return outcome;
+  };
+}
+
+/** 立即返回的等待，記錄每次要求等待的毫秒數 */
+export function instantSleep() {
+  const delays: number[] = [];
+  const sleep = async (ms: number) => {
+    delays.push(ms);
+  };
+  return { sleep, delays };
+}
+
+/** 手動放行的等待：每次呼叫都要由測試呼叫 `release()` 才會結束 */
+export function manualSleep() {
+  const delays: number[] = [];
+  const pending: Array<() => void> = [];
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => {
+      delays.push(ms);
+      pending.push(resolve);
+    });
+  return {
+    sleep,
+    delays,
+    /** 放行目前所有等待中的呼叫 */
+    release: () => pending.splice(0).forEach((resolve) => resolve()),
   };
 }

@@ -29,7 +29,7 @@ const recognizer = createShazamRecognizer();
 const jobs = createAnalysisJobs((video) =>
   runAnalysis({
     video,
-    settings: config.SEGMENT_PLAN,
+    settings: config.ANALYSIS_SETTINGS,
     audioSource: ytDlpAudioSource,
     recognizer,
   }),

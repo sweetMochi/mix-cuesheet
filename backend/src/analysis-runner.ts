@@ -1,5 +1,5 @@
 /**
- * 分析任務執行器：下載混音影片的音訊、切出片段、逐段辨識，並以一連串事件回報進度與曲目表
+ * 分析任務執行器：下載混音影片的音訊、切出片段、並行辨識，並以一連串事件回報進度與曲目表
  *
  * 音訊來源與辨識器都由外部注入，測試時可以換成假的實作
  */
@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AudioSourceError, type AudioSource, type AudioSourceErrorCode, type PreparedAudio } from './audio-source.ts';
 import { buildCuesheet, type Cuesheet, type SegmentResult } from './cuesheet.ts';
+import { defaultSleep, recognizeSegments, type RecognitionOptions, type Sleep } from './recognition-scheduler.ts';
 import type { Recognizer } from './recognizer.ts';
 import { planSegments, type SegmentPlanOptions } from './segment-plan.ts';
 import type { VideoInfo } from './video-probe.ts';
@@ -29,7 +30,7 @@ export type AnalysisEvent =
   /** 分析失敗；`message` 是給使用者看的繁體中文訊息 */
   | { type: 'error'; code: AnalysisErrorCode; message: string; detail?: string };
 
-export type AnalysisSettings = SegmentPlanOptions;
+export type AnalysisSettings = SegmentPlanOptions & RecognitionOptions;
 
 export interface AnalysisInput {
   video: Pick<VideoInfo, 'videoId' | 'durationSeconds'>;
@@ -37,6 +38,8 @@ export interface AnalysisInput {
   audioSource: AudioSource;
   recognizer: Recognizer;
   signal?: AbortSignal;
+  /** 限流冷卻的等待方式；預設真的等待，測試時可以換成立即返回 */
+  sleep?: Sleep;
   /** 任務暫存資料夾建立在這個資料夾底下；預設為系統的暫存資料夾 */
   tempRoot?: string;
 }
@@ -81,11 +84,15 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     yield { type: 'progress', completed: 0, total: segments.length };
     const results: SegmentResult[] = [];
     const cuesheet = () => buildCuesheet({ segments, durationSeconds: video.durationSeconds, results });
-    for (const [index, segment] of segments.entries()) {
-      results.push({
-        startSeconds: segment.startSeconds,
-        track: await recognizeOrNull(recognizer, files[index]!, signal),
-      });
+    // 結果依完成的先後回來；曲目表依片段起始時間計算，順序不影響快照
+    for await (const { index, track } of recognizeSegments({
+      files,
+      recognizer,
+      options: settings,
+      sleep: input.sleep ?? defaultSleep,
+      signal,
+    })) {
+      results.push({ startSeconds: segments[index]!.startSeconds, track });
       yield { type: 'progress', completed: results.length, total: segments.length };
       yield { type: 'cuesheet', cuesheet: cuesheet() };
     }
@@ -97,20 +104,6 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     if (workDir !== null) {
       await removeWorkDir(workDir);
     }
-  }
-}
-
-/**
- * 辨識失敗（包含限流）時視為無結果，任務繼續執行
- *
- * 限流時的重試在後續 ticket 加入
- */
-async function recognizeOrNull(recognizer: Recognizer, file: string, signal?: AbortSignal) {
-  try {
-    return await recognizer.recognize(file, signal);
-  } catch (error) {
-    console.warn(`片段辨識失敗，視為無結果：${String(error)}`);
-    return null;
   }
 }
 
