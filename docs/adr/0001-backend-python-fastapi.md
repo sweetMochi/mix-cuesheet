@@ -1,15 +1,17 @@
 ---
-status: accepted
+status: superseded by ADR-0002
 ---
 
 # 後端使用 Python 3.14 與 FastAPI
+
+> 這份 ADR 已被 [ADR 0002](0002-backend-nodejs-hono.md) 取代，保留下來記錄當初選用 Python 的理由
 
 mix-cuesheet 的核心功能是把混音影片的片段送去 Shazam 辨識，而 spec（#1）指定的辨識器實作是 `shazamio`，這是 Python 套件，所以後端語言跟著它決定為 Python，框架選 FastAPI。決策當時（2026-11-21）已實測 `shazamio` 0.9.0 與 `shazamio-core` 2.0.0 在 Python 3.14 下可以正常安裝並呼叫 Shazam API，因此版本定為 3.14
 
 ## 決策流程
 
 1. **先決定辨識方式**：用 `shazamio` 呼叫 Shazam 辨識片段，這是整個 App 最難替換的部分
-2. **再由依賴決定語言**：`shazamio` 只有 Python 版本，選其他語言就要自己重寫 Shazam 的簽章與 API 呼叫，或在兩種語言之間多架一層橋接
+2. **再由依賴決定語言**：`shazamio` 只有 Python 版本。其他語言雖然有移植版（例如 Node.js 的 `shazamio-core` WASM 版），但都已經一段時間沒有維護，版本也落後 Python 版，選用的話要自己維護 Shazam API 的呼叫
 3. **確認版本相容**：實測 `shazamio` 與它的原生擴充 `shazamio-core` 在 Python 3.14 下可以安裝與呼叫，才定下 3.14
 4. **確認其他外部工具不影響選擇**：yt-dlp 與 FFmpeg 都以子程序呼叫系統 PATH 上的 CLI，不是 Python 依賴，換成哪種語言都一樣能呼叫
 
@@ -32,4 +34,4 @@ spec 沒有記錄和其他後端語言的正式比較；最容易被提出的替
 
 ## 後續評估
 
-2026-11-22 評估過改用 Node.js，實測結果見 [後端執行環境實測記錄](../spikes/2026-11-22-backend-runtime/README.md)。是否改用尚未決定
+2026-11-22 評估過改用 Node.js，實測結果見 [後端執行環境實測記錄](../spikes/2026-11-22-backend-runtime/README.md)。同日決定改用 Node.js，見 [ADR 0002](0002-backend-nodejs-hono.md)

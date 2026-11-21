@@ -6,7 +6,7 @@
 2. 確認 yt-dlp 和 FFmpeg 能不能改由 npm 套件提供，不依賴系統 PATH
 3. 比較 Python 和 Node.js 遇到 Shazam 限流時的差異
 
-是否改用 Node.js **尚未決定**，目前的決策見 [ADR 0001](../../adr/0001-backend-python-fastapi.md)
+根據這些結果，同日決定後端改用 Node.js，見 [ADR 0002](../../adr/0002-backend-nodejs-hono.md)
 
 ## 測試環境
 
@@ -111,11 +111,11 @@ Python 版每次隨機換 `User-Agent`，結果也一樣，所以限流不是依
 - Shazam 的限流比 spec 假設的嚴格很多，這和語言無關，兩種方案都要重新設計送出速度和退避時間
 - 兩種方案的實際差距主要是：Node.js 的 `shazamio-core` 從 2024-04 之後沒有更新，Shazam 請求要自己維護；Python 的 `shazamio` 社群會跟進 Shazam API 的改版
 
-## 未決事項
+## 後續決定
 
-- 後端是否改用 Node.js
-- spec #1 的限流參數（同時請求數、重試次數、退避時間）、預估時間、長度上限、取樣步距
-- yt-dlp 是否鎖定版本。傾向不鎖定，但要在啟動時自動執行 `-U` 更新、記錄版本、錯誤訊息要有退路，並在 spec 和 ADR 註明這是刻意的例外
+- 後端改用 Node.js 加 Hono，見 [ADR 0002](../../adr/0002-backend-nodejs-hono.md)
+- yt-dlp 和 FFmpeg 由 npm 套件提供；yt-dlp 不鎖定版本，啟動時自動執行 `-U` 更新，並在 spec 和 ADR 0002 註明這是刻意的例外
+- spec #1 的限流參數（同時請求數、重試次數、退避時間）、預估時間、長度上限、取樣步距**尚未重新討論**，spec 和 ticket 06 先加上了實測結果的警告
 
 ## 重現方式
 
