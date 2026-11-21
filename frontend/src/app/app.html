@@ -1,0 +1,35 @@
+<main class="page">
+  <header>
+    <h1>mix-cuesheet</h1>
+    <p class="lead">貼上 YouTube 混音影片網址，自動辨識每首曲目與開始時間</p>
+  </header>
+
+  <section class="card" aria-labelledby="tools-heading">
+    <h2 id="tools-heading">工具狀態</h2>
+
+    @if (health.isLoading()) {
+      <p class="muted">正在檢查工具⋯</p>
+    } @else if (health.error()) {
+      <p class="alert">無法連線到後端，請確認後端程序已經啟動</p>
+      <button type="button" (click)="health.reload()">重新檢查</button>
+    } @else if (health.value(); as result) {
+      <ul class="tools">
+        @for (tool of result.tools; track tool.name) {
+          <li>
+            <span class="badge" [class.ok]="tool.available" [class.missing]="!tool.available">
+              {{ tool.available ? '可用' : '找不到' }}
+            </span>
+            {{ tool.name }}
+          </li>
+        }
+      </ul>
+
+      @if (missingTools().length > 0) {
+        <p class="alert">
+          系統 PATH 上找不到 {{ missingTools().join('、') }}，請安裝後重新啟動後端，再按「重新檢查」
+        </p>
+        <button type="button" (click)="health.reload()">重新檢查</button>
+      }
+    }
+  </section>
+</main>

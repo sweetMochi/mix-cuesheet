@@ -1,0 +1,28 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Angular / Node ---
+node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/out-tsc/
+npm-debug.log*
+
+# --- 啟動腳本的建置記錄 ---
+.build-stamps/
+
+# --- 編輯器與系統檔 ---
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# .scratch/ 刻意不忽略，用來放需要進版控的草稿
