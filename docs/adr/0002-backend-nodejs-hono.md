@@ -4,7 +4,12 @@ status: accepted
 
 # 後端改用 Node.js 與 Hono
 
-2026-11-22 決定後端由 Python（FastAPI）改為 Node.js 加 TypeScript，Web 框架用 Hono。[ADR 0001](0001-backend-python-fastapi.md) 選用 Python 的主要理由是 `shazamio` 只有 Python 版本；當天的實測證實 Node.js 也能完成 Shazam 辨識，yt-dlp 和 FFmpeg 也能改由 npm 套件提供，這個理由就不再是限制。實測紀錄見 [後端執行環境實測記錄](../spikes/2026-11-22-backend-runtime/README.md)
+2026-11-22 決定後端由 Python（FastAPI）改為 Node.js 加 TypeScript，Web 框架用 Hono。理由是前後端統一使用 Node.js 和 TypeScript，而且開發者對 Node.js 的熟悉度比 Python 高。[ADR 0001](0001-backend-python-fastapi.md) 選用 Python 的主要理由是 `shazamio` 只有 Python 版本；當天的實測證實 Node.js 也能完成 Shazam 辨識，yt-dlp 和 FFmpeg 也能改由 npm 套件提供，這個理由就不再是限制。實測紀錄見 [後端執行環境實測記錄](../spikes/2026-11-22-backend-runtime/README.md)
+
+## 決策理由
+
+- **前後端技術一致**：前端已經是 Angular 加 TypeScript，後端也用 Node.js 加 TypeScript，整個專案只有一種語言和一套工具鏈
+- **熟悉度**：開發者對 Node.js 的理解比 Python 深，實作、除錯和維護都比較有把握。這點在 Shazam 請求要自己維護的情況下特別重要
 
 ## 為什麼 Python 的理由不再成立
 
@@ -13,7 +18,7 @@ status: accepted
 - **外部工具**：`ffmpeg-static` 和 `youtube-dl-exec` 在只有 Node.js 的環境下就能完成預先解析、下載和切段；yt-dlp 可以用 Node.js 當 JS runtime，不需要安裝 Deno
 - **限流和語言無關**：Python 和 Node.js 在相同條件下被限流的方式完全相同
 
-## 評估時列出的好處
+## 附帶的好處
 
 - 前後端都用 TypeScript，API 契約的型別可以共用
 - 啟動腳本只需要 Node.js，不用再找 Python 3.14、建立 venv
