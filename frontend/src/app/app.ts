@@ -41,6 +41,10 @@ export class App {
     return status === 'done' || status === 'failed';
   });
   protected readonly isBusy = computed(() => this.isProbing() || this.isAnalyzing());
+  /** 曲目表中的曲目數，不含「未辨識」列 */
+  protected readonly trackCount = computed(
+    () => (this.run()?.rows() ?? []).filter((row) => row.kind === 'track').length,
+  );
 
   protected readonly video = computed(() => {
     const state = this.probe();

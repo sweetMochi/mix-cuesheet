@@ -57,6 +57,12 @@ h2 {
   color: var(--error-fg);
 }
 
+.badge.warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  white-space: nowrap;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -286,6 +292,14 @@ button.primary {
 
 .cuesheet a {
   color: var(--accent);
+}
+
+.cuesheet td .badge {
+  margin-left: 6px;
+}
+
+.cuesheet tr.unrecognized td {
+  background: var(--bg);
 }
 
 .visually-hidden {

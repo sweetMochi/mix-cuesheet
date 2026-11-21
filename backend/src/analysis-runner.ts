@@ -80,16 +80,17 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     yield { type: 'phase', phase: 'recognizing' };
     yield { type: 'progress', completed: 0, total: segments.length };
     const results: SegmentResult[] = [];
+    const cuesheet = () => buildCuesheet({ segments, durationSeconds: video.durationSeconds, results });
     for (const [index, segment] of segments.entries()) {
       results.push({
         startSeconds: segment.startSeconds,
         track: await recognizeOrNull(recognizer, files[index]!, signal),
       });
       yield { type: 'progress', completed: results.length, total: segments.length };
-      yield { type: 'cuesheet', cuesheet: buildCuesheet(results) };
+      yield { type: 'cuesheet', cuesheet: cuesheet() };
     }
 
-    yield { type: 'done', cuesheet: buildCuesheet(results) };
+    yield { type: 'done', cuesheet: cuesheet() };
   } catch (error) {
     yield errorEvent(error, 'unexpected', '分析時發生未預期的錯誤');
   } finally {

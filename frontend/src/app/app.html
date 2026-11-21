@@ -51,7 +51,7 @@
             @case ('done') {
               <p class="done-status" role="status">
                 <span class="badge ok">完成</span>
-                分析完成，曲目表共 {{ run.rows().length }} 首曲目
+                分析完成，曲目表共 {{ trackCount() }} 首曲目
               </p>
             }
             @case ('failed') {
@@ -128,9 +128,16 @@
 
         @if (run.rows().length === 0) {
           <p class="muted">
-            {{ isAnalyzing() ? '還沒有辨識到曲目，辨識到的曲目會即時出現在這裡' : '沒有辨識到任何曲目' }}
+            {{
+              isAnalyzing()
+                ? '還沒有辨識到曲目，辨識到的曲目會即時出現在這裡'
+                : '沒有辨識到任何曲目'
+            }}
           </p>
         } @else {
+          @if (!isAnalyzing() && trackCount() === 0) {
+            <p class="muted">沒有辨識到任何曲目</p>
+          }
           <div class="table-wrap">
             <table class="cuesheet">
               <thead>
@@ -144,27 +151,51 @@
               </thead>
               <tbody>
                 @for (row of run.rows(); track row.startSeconds) {
-                  <tr>
-                    <td class="cover">
-                      @if (row.track.coverUrl; as coverUrl) {
-                        <img [src]="coverUrl" alt="" width="40" height="40" loading="lazy" />
-                      }
-                    </td>
-                    <td class="time">
-                      <a
-                        [href]="youtubeUrl(run.videoId, row.startSeconds)"
-                        target="_blank"
-                        rel="noopener"
-                        [title]="'在 YouTube 從 ' + row.startText + ' 開始播放'"
-                        >{{ row.startText }}</a
-                      >
-                    </td>
-                    <td>{{ row.track.artist }}</td>
-                    <td>{{ row.track.title }}</td>
-                    <td>
-                      <a [href]="row.track.shazamUrl" target="_blank" rel="noopener">開啟</a>
-                    </td>
-                  </tr>
+                  @if (row.kind === 'track') {
+                    <tr>
+                      <td class="cover">
+                        @if (row.track.coverUrl; as coverUrl) {
+                          <img [src]="coverUrl" alt="" width="40" height="40" loading="lazy" />
+                        }
+                      </td>
+                      <td class="time">
+                        <a
+                          [href]="youtubeUrl(run.videoId, row.startSeconds)"
+                          target="_blank"
+                          rel="noopener"
+                          [title]="'在 YouTube 從 ' + row.startText + ' 開始播放'"
+                          >{{ row.startText }}</a
+                        >
+                      </td>
+                      <td>{{ row.track.artist }}</td>
+                      <td>
+                        {{ row.track.title }}
+                        @if (row.singleHit) {
+                          <span
+                            class="badge warn"
+                            title="整支影片中只有 1 個片段辨識到這首曲目，可能是誤判或很短的過場"
+                            >僅命中 1 次</span
+                          >
+                        }
+                      </td>
+                      <td>
+                        <a [href]="row.track.shazamUrl" target="_blank" rel="noopener">開啟</a>
+                      </td>
+                    </tr>
+                  } @else {
+                    <tr class="unrecognized">
+                      <td class="cover"></td>
+                      <td class="time">
+                        <a
+                          [href]="youtubeUrl(run.videoId, row.startSeconds)"
+                          target="_blank"
+                          rel="noopener"
+                          [title]="'在 YouTube 從 ' + row.startText + ' 開始播放'"
+                          >{{ row.startText }}</a>–{{ row.endText }}
+                      </td>
+                      <td colspan="3" class="muted">未辨識</td>
+                    </tr>
+                  }
                 }
               </tbody>
             </table>

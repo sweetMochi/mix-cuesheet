@@ -15,18 +15,30 @@ export interface RecognizedTrack {
   coverUrl: string | null;
 }
 
+/** 一首曲目；整支影片中命中同一首的片段都併入這一列 */
 export interface TrackRow {
   kind: 'track';
-  /** 第一次命中的片段起始秒數 */
+  /** 最早一次命中的片段起始秒數 */
   startSeconds: number;
   /** 後端格式化好的開始時間，例如 `12:40`、`1:02:03` */
   startText: string;
   track: RecognizedTrack;
-  /** 併入這一列的片段數 */
+  /** 整支影片中命中這首曲目的片段數 */
   hitCount: number;
+  /** 「僅命中 1 次」標記 */
+  singleHit: boolean;
 }
 
-export type CuesheetRow = TrackRow;
+/** 連續 2 個以上的無結果片段合併成的「未辨識」區間 */
+export interface UnrecognizedRow {
+  kind: 'unrecognized';
+  startSeconds: number;
+  startText: string;
+  endSeconds: number;
+  endText: string;
+}
+
+export type CuesheetRow = TrackRow | UnrecognizedRow;
 
 export interface Cuesheet {
   rows: CuesheetRow[];

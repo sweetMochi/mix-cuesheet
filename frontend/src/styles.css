@@ -11,6 +11,8 @@
   --ok-fg: #1f6b37;
   --error-bg: #fdeaea;
   --error-fg: #a32020;
+  --warn-bg: #fdf1d8;
+  --warn-fg: #8a5a00;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +28,8 @@
     --ok-fg: #8fdba5;
     --error-bg: #452023;
     --error-fg: #ffb3b3;
+    --warn-bg: #43361a;
+    --warn-fg: #f3d08a;
   }
 }
 

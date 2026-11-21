@@ -8,7 +8,7 @@ import { track } from './fakes.ts';
 const ID = 'dQw4w9WgXcQ';
 
 const cuesheet = {
-  rows: [{ kind: 'track' as const, startSeconds: 0, startText: '00:00', track: track('A'), hitCount: 1 }],
+  rows: [{ kind: 'track' as const, startSeconds: 0, startText: '00:00', track: track('A'), hitCount: 1, singleHit: true }],
 };
 
 const happyEvents: AnalysisEvent[] = [
