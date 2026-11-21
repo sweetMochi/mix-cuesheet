@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app.ts';
 import * as config from './config.ts';
 import { checkTools, readYtDlpVersion } from './tools.ts';
+import { probeVideo } from './video-probe.ts';
 
 const missing = checkTools()
   .filter((tool) => !tool.available)
@@ -23,6 +24,7 @@ if (!existsSync(config.FRONTEND_DIST_DIR)) {
 const app = createApp({
   checkTools,
   ytDlpVersion,
+  probeVideo,
   frontendDistDir: config.FRONTEND_DIST_DIR,
 });
 

@@ -26,6 +26,9 @@ export const SEGMENT_SECONDS = 12;
 /** 相鄰片段起始時間的間隔（秒） */
 export const STEP_SECONDS = 20;
 
+/** 最後一段剩下的長度少於這個值時略過（秒） */
+export const MIN_SEGMENT_SECONDS = 5;
+
 /** 混音影片長度上限（秒），超過直接拒絕 */
 export const MAX_DURATION_SECONDS = 3 * 60 * 60;
 

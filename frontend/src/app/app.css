@@ -81,3 +81,131 @@ button {
 button:hover {
   border-color: var(--accent);
 }
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button:disabled:hover {
+  border-color: var(--border);
+}
+
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.url-form {
+  display: flex;
+  gap: 8px;
+}
+
+.url-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+}
+
+.url-form input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.confirm {
+  margin-top: 16px;
+}
+
+.video-title {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.video-title a {
+  color: inherit;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin: 0 0 16px;
+}
+
+.facts dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.facts dd {
+  margin: 0;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.card .alert {
+  margin: 16px 0 0;
+}
+
+.alert p {
+  margin: 0;
+}
+
+.alert details {
+  margin-top: 8px;
+}
+
+.alert pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .url-form {
+    flex-direction: column;
+  }
+}

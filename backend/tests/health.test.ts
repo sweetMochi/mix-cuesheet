@@ -6,6 +6,9 @@ function appWithTools(...statuses: ToolStatus[]) {
   return createApp({
     checkTools: () => statuses,
     ytDlpVersion: '2026.10.26',
+    probeVideo: async () => {
+      throw new Error('健康檢查不應該讀取影片');
+    },
     frontendDistDir: null,
   });
 }

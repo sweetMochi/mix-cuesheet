@@ -4,6 +4,62 @@
     <p class="lead">貼上 YouTube 混音影片網址，自動辨識每首曲目與開始時間</p>
   </header>
 
+  <section class="card" aria-labelledby="video-heading">
+    <h2 id="video-heading">混音影片</h2>
+
+    <form class="url-form" (submit)="submit($event)">
+      <label class="visually-hidden" for="video-url">YouTube 影片網址</label>
+      <input
+        id="video-url"
+        type="text"
+        inputmode="url"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="https://www.youtube.com/watch?v=⋯ 或 https://youtu.be/⋯"
+        [value]="url()"
+        [disabled]="isProbing()"
+        (input)="onUrlInput($event)"
+      />
+      <button type="submit" class="primary" [disabled]="!canSubmit()">讀取影片</button>
+    </form>
+
+    @if (isProbing()) {
+      <p class="muted status" role="status">
+        <span class="spinner" aria-hidden="true"></span>
+        正在讀取影片資訊⋯
+      </p>
+    } @else if (video(); as video) {
+      <div class="confirm">
+        <h3 class="video-title">
+          <a [href]="youtubeUrl(video.videoId)" target="_blank" rel="noopener">
+            {{ video.title || '（沒有標題）' }}
+          </a>
+        </h3>
+        <dl class="facts">
+          <div>
+            <dt>長度</dt>
+            <dd>{{ video.durationText }}</dd>
+          </div>
+          <div>
+            <dt>預估片段數</dt>
+            <dd>{{ video.segmentCount }} 段</dd>
+          </div>
+        </dl>
+        <button type="button" class="primary" disabled title="分析功能尚未完成">開始分析</button>
+      </div>
+    } @else if (probeError(); as error) {
+      <div class="alert" role="alert">
+        <p>{{ error.message }}</p>
+        @if (error.detail) {
+          <details>
+            <summary>原始錯誤</summary>
+            <pre>{{ error.detail }}</pre>
+          </details>
+        }
+      </div>
+    }
+  </section>
+
   <section class="card" aria-labelledby="tools-heading">
     <h2 id="tools-heading">工具狀態</h2>
 

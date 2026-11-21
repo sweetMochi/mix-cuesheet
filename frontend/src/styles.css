@@ -6,6 +6,7 @@
   --muted: #5f6672;
   --border: #d9dde3;
   --accent: #3b6fe0;
+  --on-accent: #ffffff;
   --ok-bg: #e3f4e8;
   --ok-fg: #1f6b37;
   --error-bg: #fdeaea;
@@ -20,6 +21,7 @@
     --muted: #9aa1ab;
     --border: #343842;
     --accent: #7aa2ff;
+    --on-accent: #10182b;
     --ok-bg: #1d3a26;
     --ok-fg: #8fdba5;
     --error-bg: #452023;
