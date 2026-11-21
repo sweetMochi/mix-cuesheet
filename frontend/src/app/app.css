@@ -195,6 +195,99 @@ button.primary {
   font-size: 0.85rem;
 }
 
+.analysis .status {
+  margin: 0;
+}
+
+.analysis .muted:not(.status) {
+  margin: 4px 0 0;
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress {
+  height: 8px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.done-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.cuesheet {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cuesheet th,
+.cuesheet td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.cuesheet th {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: normal;
+  white-space: nowrap;
+}
+
+.cuesheet tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cuesheet td.cover {
+  width: 56px;
+}
+
+.cuesheet .cover img {
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.cuesheet td.time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cuesheet a {
+  color: var(--accent);
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

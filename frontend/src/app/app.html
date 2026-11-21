@@ -10,6 +10,7 @@
     <form class="url-form" (submit)="submit($event)">
       <label class="visually-hidden" for="video-url">YouTube 影片網址</label>
       <input
+        #urlInput
         id="video-url"
         type="text"
         inputmode="url"
@@ -17,7 +18,7 @@
         spellcheck="false"
         placeholder="https://www.youtube.com/watch?v=⋯ 或 https://youtu.be/⋯"
         [value]="url()"
-        [disabled]="isProbing()"
+        [disabled]="isBusy()"
         (input)="onUrlInput($event)"
       />
       <button type="submit" class="primary" [disabled]="!canSubmit()">讀取影片</button>
@@ -45,7 +46,67 @@
             <dd>{{ video.segmentCount }} 段</dd>
           </div>
         </dl>
-        <button type="button" class="primary" disabled title="分析功能尚未完成">開始分析</button>
+        @if (run(); as run) {
+          @switch (run.status()) {
+            @case ('done') {
+              <p class="done-status" role="status">
+                <span class="badge ok">完成</span>
+                分析完成，曲目表共 {{ run.rows().length }} 首曲目
+              </p>
+            }
+            @case ('failed') {
+              @if (run.error(); as error) {
+                <div class="alert" role="alert">
+                  <p>{{ error.message }}</p>
+                  @if (error.detail) {
+                    <details>
+                      <summary>原始錯誤</summary>
+                      <pre>{{ error.detail }}</pre>
+                    </details>
+                  }
+                </div>
+              }
+            }
+            @default {
+              <div class="analysis">
+                <p class="muted status" role="status">
+                  <span class="spinner" aria-hidden="true"></span>
+                  {{ phaseText() }}⋯
+                </p>
+                @if (run.reconnecting()) {
+                  <p class="muted">與後端的連線中斷，正在重新連線⋯</p>
+                }
+                @if (run.phase() === 'recognizing' && run.progress(); as progress) {
+                  <div class="progress-label">
+                    <span>第 {{ progress.completed }}／{{ progress.total }} 段</span>
+                    <span class="muted">{{ progressPercent() }}%</span>
+                  </div>
+                  <div
+                    class="progress"
+                    role="progressbar"
+                    aria-label="辨識進度"
+                    aria-valuemin="0"
+                    [attr.aria-valuemax]="progress.total"
+                    [attr.aria-valuenow]="progress.completed"
+                  >
+                    <div class="progress-fill" [style.width.%]="progressPercent()"></div>
+                  </div>
+                }
+              </div>
+            }
+          }
+
+          @if (isFinished()) {
+            <div class="actions">
+              @if (run.status() === 'failed') {
+                <button type="button" (click)="startAnalysis()">重新分析這支影片</button>
+              }
+              <button type="button" class="primary" (click)="reset()">分析其他影片</button>
+            </div>
+          }
+        } @else {
+          <button type="button" class="primary" (click)="startAnalysis()">開始分析</button>
+        }
       </div>
     } @else if (probeError(); as error) {
       <div class="alert" role="alert">
@@ -59,6 +120,59 @@
       </div>
     }
   </section>
+
+  @if (run(); as run) {
+    @if (run.status() !== 'failed' || run.rows().length > 0) {
+      <section class="card" aria-labelledby="cuesheet-heading">
+        <h2 id="cuesheet-heading">曲目表</h2>
+
+        @if (run.rows().length === 0) {
+          <p class="muted">
+            {{ isAnalyzing() ? '還沒有辨識到曲目，辨識到的曲目會即時出現在這裡' : '沒有辨識到任何曲目' }}
+          </p>
+        } @else {
+          <div class="table-wrap">
+            <table class="cuesheet">
+              <thead>
+                <tr>
+                  <th scope="col" class="cover">封面</th>
+                  <th scope="col">開始時間</th>
+                  <th scope="col">演出者</th>
+                  <th scope="col">曲名</th>
+                  <th scope="col">Shazam</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of run.rows(); track row.startSeconds) {
+                  <tr>
+                    <td class="cover">
+                      @if (row.track.coverUrl; as coverUrl) {
+                        <img [src]="coverUrl" alt="" width="40" height="40" loading="lazy" />
+                      }
+                    </td>
+                    <td class="time">
+                      <a
+                        [href]="youtubeUrl(run.videoId, row.startSeconds)"
+                        target="_blank"
+                        rel="noopener"
+                        [title]="'在 YouTube 從 ' + row.startText + ' 開始播放'"
+                        >{{ row.startText }}</a
+                      >
+                    </td>
+                    <td>{{ row.track.artist }}</td>
+                    <td>{{ row.track.title }}</td>
+                    <td>
+                      <a [href]="row.track.shazamUrl" target="_blank" rel="noopener">開啟</a>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+    }
+  }
 
   <section class="card" aria-labelledby="tools-heading">
     <h2 id="tools-heading">工具狀態</h2>
