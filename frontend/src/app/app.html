@@ -24,9 +24,14 @@
         }
       </ul>
 
+      @if (result.ytDlpVersion) {
+        <p class="muted">yt-dlp 版本：{{ result.ytDlpVersion }}</p>
+      }
+
       @if (missingTools().length > 0) {
         <p class="alert">
-          系統 PATH 上找不到 {{ missingTools().join('、') }}，請安裝後重新啟動後端，再按「重新檢查」
+          找不到 {{ missingTools().join('、') }} 的執行檔，請關閉後端，執行「start.ps1
+          -Rebuild」重新安裝依賴
         </p>
         <button type="button" (click)="health.reload()">重新檢查</button>
       }

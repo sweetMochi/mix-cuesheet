@@ -1,13 +1,4 @@
-# --- Python ---
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# --- Angular / Node ---
+# --- Node.js / Angular ---
 node_modules/
 frontend/dist/
 frontend/.angular/
