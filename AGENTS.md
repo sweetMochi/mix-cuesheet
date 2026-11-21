@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues and specs are tracked as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+Issues and specs are tracked as GitHub issues in `sweetMochi/mix-cuesheet` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
