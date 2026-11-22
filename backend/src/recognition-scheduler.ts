@@ -29,6 +29,12 @@ export interface RecognizedSegment {
   index: number;
   /** 辨識到的曲目；無結果、重試用完或其他辨識錯誤時為空值 */
   track: RecognizedTrack | null;
+  /** 重試用完或遇到其他辨識錯誤時的原因；辨識成功或無結果時為空值 */
+  failureReason: string | null;
+  /** 這個片段呼叫辨識器的次數，包含被限流的請求 */
+  requests: number;
+  /** 這個片段被限流的次數 */
+  rateLimited: number;
 }
 
 export interface RecognizeSegmentsInput {
@@ -43,7 +49,7 @@ export interface RecognizeSegmentsInput {
 /**
  * 辨識所有片段，依完成的先後產出結果；完成順序不一定和輸入順序相同
  *
- * 每個片段一定會產出一個結果：辨識失敗不會中斷其他片段。
+ * 每個片段一定會產出一個結果：辨識失敗不會中斷其他片段，失敗原因附在結果中，由呼叫端決定如何記錄。
  * `signal` 中止時不再送出新的請求，並丟出中止的原因
  */
 export async function* recognizeSegments(
@@ -65,8 +71,8 @@ export async function* recognizeSegments(
   const worker = async () => {
     while (nextIndex < files.length && signal?.aborted !== true) {
       const index = nextIndex++;
-      const track = await recognizeWithRetry(recognizer, files[index]!, cooldown, options, signal);
-      finished.push({ index, track });
+      const outcome = await recognizeWithRetry(recognizer, files[index]!, cooldown, options, signal);
+      finished.push({ index, ...outcome });
       wake?.();
     }
   };
@@ -101,7 +107,7 @@ export async function* recognizeSegments(
 }
 
 /**
- * 辨識一個片段；被限流時等共用冷卻結束後重試，重試用完或遇到其他錯誤時視為無結果
+ * 辨識一個片段；被限流時等共用冷卻結束後重試，重試用完或遇到其他錯誤時視為無結果並附上原因
  *
  * `signal` 中止時丟出中止的原因，不視為無結果
  */
@@ -111,21 +117,28 @@ async function recognizeWithRetry(
   cooldown: Cooldown,
   options: RecognitionOptions,
   signal?: AbortSignal,
-): Promise<RecognizedTrack | null> {
+): Promise<Omit<RecognizedSegment, 'index'>> {
+  let requests = 0;
   for (let retries = 0; ; retries++) {
     await cooldown.wait();
     signal?.throwIfAborted();
     try {
-      return await recognizer.recognize(file, signal);
+      requests += 1;
+      const track = await recognizer.recognize(file, signal);
+      return { track, failureReason: null, requests, rateLimited: retries };
     } catch (error) {
       signal?.throwIfAborted();
       if (error instanceof RateLimitedError && retries < options.retryAttempts) {
         cooldown.extend(backoffMs(retries, options));
         continue;
       }
-      const reason = error instanceof RateLimitedError ? `限流重試 ${retries} 次後仍被限流` : String(error);
-      console.warn(`片段辨識失敗，視為無結果：${reason}`);
-      return null;
+      const isRateLimited = error instanceof RateLimitedError;
+      return {
+        track: null,
+        failureReason: isRateLimited ? `限流重試 ${retries} 次後仍被限流` : String(error),
+        requests,
+        rateLimited: isRateLimited ? retries + 1 : retries,
+      };
     }
   }
 }

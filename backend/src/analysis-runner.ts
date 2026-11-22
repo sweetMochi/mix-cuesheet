@@ -47,8 +47,10 @@ export interface AnalysisInput {
   tempRoot?: string;
   /** 取得目前時間（毫秒），用來計算各階段耗時；預設為 `Date.now` */
   now?: () => number;
-  /** 輸出任務完成時的耗時記錄；預設為 `console.log` */
+  /** 輸出任務完成時的耗時記錄與辨識統計；預設為 `console.log` */
   log?: (message: string) => void;
+  /** 輸出辨識失敗的片段；預設為 `console.warn` */
+  warn?: (message: string) => void;
 }
 
 /** 暫存資料夾名稱的前綴 */
@@ -102,22 +104,31 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     yield { type: 'phase', phase: 'recognizing' };
     yield { type: 'progress', completed: 0, total: segments.length };
     const results: SegmentResult[] = [];
+    const stats: RecognitionStats = { requests: 0, rateLimited: 0, failedStartSeconds: [] };
     const cuesheet = () => buildCuesheet({ segments, durationSeconds: video.durationSeconds, results });
     // 結果依完成的先後回來；曲目表依片段起始時間計算，順序不影響快照
-    for await (const { index, track } of recognizeSegments({
+    for await (const { index, track, failureReason, requests, rateLimited } of recognizeSegments({
       files,
       recognizer,
       options: settings,
       sleep: input.sleep ?? defaultSleep,
       signal,
     })) {
-      results.push({ startSeconds: segments[index]!.startSeconds, track });
+      const { startSeconds } = segments[index]!;
+      results.push({ startSeconds, track });
+      stats.requests += requests;
+      stats.rateLimited += rateLimited;
+      if (failureReason !== null) {
+        stats.failedStartSeconds.push(startSeconds);
+        (input.warn ?? console.warn)(`片段 ${formatTimestamp(startSeconds)} 辨識失敗，視為無結果：${failureReason}`);
+      }
       yield { type: 'progress', completed: results.length, total: segments.length };
       yield { type: 'cuesheet', cuesheet: cuesheet() };
     }
 
     const finishedAt = now();
-    (input.log ?? console.log)(
+    const log = input.log ?? console.log;
+    log(
       formatTimingSummary({
         durationSeconds: video.durationSeconds,
         segmentCount: segments.length,
@@ -125,6 +136,7 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
         finishedAt,
       }),
     );
+    log(formatRecognitionStats(stats, segments.length, finishedAt - phaseStartedAt.recognizing));
     yield { type: 'done', cuesheet: cuesheet() };
   } catch (error) {
     yield failed(error, 'unexpected', '分析時發生未預期的錯誤');
@@ -157,6 +169,29 @@ function formatTimingSummary(timing: {
   return (
     `分析完成：影片 ${formatTimestamp(timing.durationSeconds)}、${timing.segmentCount} 段，` +
     `總耗時 ${elapsed(phaseStartedAt.downloading, finishedAt)}（${phases.join('、')}）`
+  );
+}
+
+/** 一次分析任務的辨識統計 */
+interface RecognitionStats {
+  /** 呼叫辨識器的總次數，包含被限流的請求 */
+  requests: number;
+  /** 被限流的總次數 */
+  rateLimited: number;
+  /** 辨識失敗的片段起始秒數，依完成的先後排列 */
+  failedStartSeconds: number[];
+}
+
+/**
+ * 任務完成時的辨識統計，用來比較不同限流參數的效果，例如
+ * `辨識統計：平均每段 26.2 秒，請求 210 次、被限流 129 次，失敗 2 段（10:00、10:20）`
+ */
+function formatRecognitionStats(stats: RecognitionStats, segmentCount: number, recognizingMs: number): string {
+  const perSegment = segmentCount === 0 ? 0 : recognizingMs / 1000 / segmentCount;
+  const failed = stats.failedStartSeconds.toSorted((a, b) => a - b).map((seconds) => formatTimestamp(seconds));
+  return (
+    `辨識統計：平均每段 ${perSegment.toFixed(1)} 秒，請求 ${stats.requests} 次、被限流 ${stats.rateLimited} 次，` +
+    `失敗 ${failed.length} 段${failed.length > 0 ? `（${failed.join('、')}）` : ''}`
   );
 }
 

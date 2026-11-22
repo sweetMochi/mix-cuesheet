@@ -36,9 +36,14 @@ export const MAX_DURATION_SECONDS = 3 * 60 * 60;
 
 // Shazam 的限流以 IP 計算，2026-11-22 實測一開始可以連續送約 3 個請求，之後大約每 15～25 秒補 1 個名額
 // （見 docs/spikes/2026-11-22-backend-runtime/README.md）。實際速度受限流決定，並行度提高也不會更快
+//
+// 2026-11-23 以同一支 26:59（81 段）的混音實測：
+// - 並行度 2：平均每段 26.2 秒，4 段限流重試用完而失敗，而且都是同時送出的相鄰片段，產生了假的「未辨識」列
+// - 並行度 1：平均每段 19.4 秒，0 段失敗；另一支 31:12（94 段）的混音也是每段 20.0 秒、0 段失敗
+// 並行時多個請求搶同一個名額，共用冷卻反而被拉長，所以固定為 1
 
 /** 同時送往 Shazam 的辨識請求數 */
-export const SHAZAM_CONCURRENCY = 2;
+export const SHAZAM_CONCURRENCY = 1;
 
 /** 單一片段遇到限流時的重試次數 */
 export const SHAZAM_RETRY_ATTEMPTS = 6;

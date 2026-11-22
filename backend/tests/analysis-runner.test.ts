@@ -50,6 +50,8 @@ interface AnalyzeOptions {
   now?: () => number;
   /** 預設不輸出 */
   log?: (message: string) => void;
+  /** 預設不輸出 */
+  warn?: (message: string) => void;
   /** 每收到一個事件就呼叫，用來在事件之間推進假時鐘或送出取消信號 */
   onEvent?: (event: AnalysisEvent) => void;
   signal?: AbortSignal;
@@ -72,6 +74,7 @@ async function analyze(
     sleep: options.sleep ?? instantSleep().sleep,
     now: options.now,
     log: options.log ?? (() => {}),
+    warn: options.warn ?? (() => {}),
     signal: options.signal,
   })) {
     events.push(event);
@@ -426,15 +429,71 @@ describe('runAnalysis', () => {
       const { run, messages } = timedRun(60, { downloading: 15_400, splitting: 8_000, recognizing: 1_849_000 });
       await run;
 
-      expect(messages).toEqual(['分析完成：影片 01:00、3 段，總耗時 31:12（下載 00:15、切割 00:08、辨識 30:49）']);
+      expect(messages[0]).toBe('分析完成：影片 01:00、3 段，總耗時 31:12（下載 00:15、切割 00:08、辨識 30:49）');
     });
 
     it('耗時 1 小時以上時以 H:MM:SS 顯示', async () => {
       const { run, messages } = timedRun(3723, { downloading: 30_000, splitting: 60_000, recognizing: 2 * 3600_000 });
       await run;
 
-      expect(messages).toEqual([
+      expect(messages[0]).toBe(
         `分析完成：影片 1:02:03、${planSegments(3723, settings).length} 段，總耗時 2:01:30（下載 00:30、切割 01:00、辨識 2:00:00）`,
+      );
+    });
+
+    it('耗時記錄之後輸出一行辨識統計：平均每段秒數、請求與限流次數、失敗片段', async () => {
+      const messages: string[] = [];
+      let time = 0;
+      const at0 = sequence(new RateLimitedError(), track('A'));
+
+      await analyze(
+        100,
+        (start) => {
+          if (start === 0) return at0();
+          if (start === 60 || start === 20) throw new RateLimitedError();
+          if (start === 80) throw new Error('network down');
+          return null;
+        },
+        {
+          settings: { retryAttempts: 2 },
+          now: () => time,
+          log: (message) => messages.push(message),
+          onEvent: (event) => {
+            if (event.type === 'phase' && event.phase === 'recognizing') time += 131_000;
+          },
+        },
+      );
+
+      // 片段 0：2 次請求、1 次限流；片段 20、60：各 3 次請求、3 次限流；片段 40：1 次；片段 80：1 次、其他錯誤
+      expect(messages).toEqual([
+        expect.stringMatching(/^分析完成：/),
+        '辨識統計：平均每段 26.2 秒，請求 10 次、被限流 7 次，失敗 3 段（00:20、01:00、01:20）',
+      ]);
+    });
+
+    it('沒有失敗片段時統計顯示失敗 0 段', async () => {
+      const { run, messages } = timedRun(60, { recognizing: 60_000 });
+      await run;
+
+      expect(messages[1]).toBe('辨識統計：平均每段 20.0 秒，請求 3 次、被限流 0 次，失敗 0 段');
+    });
+
+    it('片段辨識失敗時立即輸出該片段的開始時間與原因', async () => {
+      const warnings: string[] = [];
+
+      await analyze(
+        80,
+        (start) => {
+          if (start === 20) throw new RateLimitedError();
+          if (start === 40) throw new Error('network down');
+          return track('A');
+        },
+        { settings: { retryAttempts: 2 }, warn: (message) => warnings.push(message) },
+      );
+
+      expect(warnings.toSorted()).toEqual([
+        '片段 00:20 辨識失敗，視為無結果：限流重試 2 次後仍被限流',
+        '片段 00:40 辨識失敗，視為無結果：Error: network down',
       ]);
     });
 
