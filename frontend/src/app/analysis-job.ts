@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { ApiError, toApiError } from './api-error';
@@ -55,12 +55,13 @@ type AnalysisEvent =
   | ({ type: 'progress' } & AnalysisProgress)
   | { type: 'cuesheet'; cuesheet: Cuesheet }
   | { type: 'done'; cuesheet: Cuesheet }
-  | { type: 'error'; code: string; message: string; detail?: string };
+  | { type: 'error'; code: string; message: string; detail?: string }
+  | { type: 'cancelled' };
 
-/** 後端以 SSE 的 `event:` 欄位標示事件類型 */
-const EVENT_TYPES: readonly AnalysisEvent['type'][] = ['phase', 'progress', 'cuesheet', 'done'];
+/** 後端以 SSE 的 `event:` 欄位標示事件類型；`error` 另外處理 */
+const EVENT_TYPES: readonly AnalysisEvent['type'][] = ['phase', 'progress', 'cuesheet', 'done', 'cancelled'];
 
-export type AnalysisStatus = 'starting' | 'running' | 'done' | 'failed';
+export type AnalysisStatus = 'starting' | 'running' | 'done' | 'failed' | 'cancelled';
 
 const CONNECTION_LOST: ApiError = {
   code: 'connection-lost',
@@ -79,6 +80,8 @@ export class AnalysisRun {
   private readonly _rows = signal<CuesheetRow[]>([]);
   private readonly _error = signal<ApiError | null>(null);
   private readonly _reconnecting = signal(false);
+  private readonly _cancelling = signal(false);
+  private readonly _cancelError = signal<ApiError | null>(null);
 
   readonly status = this._status.asReadonly();
   readonly phase = this._phase.asReadonly();
@@ -88,7 +91,12 @@ export class AnalysisRun {
   readonly error = this._error.asReadonly();
   /** 連線暫時中斷，EventSource 正在自動重新連線 */
   readonly reconnecting = this._reconnecting.asReadonly();
+  /** 已經要求取消，正在等後端停止任務 */
+  readonly cancelling = this._cancelling.asReadonly();
+  /** 取消請求失敗的原因；任務仍在執行 */
+  readonly cancelError = this._cancelError.asReadonly();
 
+  private jobId: string | null = null;
   private source: EventSource | null = null;
   private closed = false;
 
@@ -106,6 +114,37 @@ export class AnalysisRun {
     this.source = null;
   }
 
+  /**
+   * 要求後端取消任務；任務停止後會收到已取消事件
+   *
+   * 任務還在建立中時，等拿到任務 ID 後再送出取消
+   */
+  async cancel(): Promise<void> {
+    const status = this._status();
+    if (this._cancelling() || (status !== 'starting' && status !== 'running')) {
+      return;
+    }
+    this._cancelling.set(true);
+    this._cancelError.set(null);
+    if (this.jobId !== null) {
+      await this.requestCancel(this.jobId);
+    }
+  }
+
+  private async requestCancel(jobId: string): Promise<void> {
+    try {
+      await firstValueFrom(this.http.delete(`/api/jobs/${encodeURIComponent(jobId)}`));
+    } catch (error) {
+      if (error instanceof HttpErrorResponse && error.status === 404) {
+        // 後端已經沒有這個任務，不會再送出任何事件
+        this.finish('cancelled');
+        return;
+      }
+      this._cancelling.set(false);
+      this._cancelError.set(toApiError(error));
+    }
+  }
+
   private async begin(): Promise<void> {
     let jobId: string;
     try {
@@ -121,6 +160,10 @@ export class AnalysisRun {
       return;
     }
 
+    this.jobId = jobId;
+    if (this._cancelling()) {
+      void this.requestCancel(jobId);
+    }
     this._status.set('running');
     const source = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events`);
     this.source = source;
@@ -157,20 +200,28 @@ export class AnalysisRun {
         break;
       case 'done':
         this._rows.set(event.cuesheet.rows);
-        this._status.set('done');
-        // 後端送完結束事件後會關閉串流，要先關掉 EventSource，避免它自動重新連線
-        this.close();
+        this.finish('done');
         break;
       case 'error':
         this.fail({ code: event.code, message: event.message, detail: event.detail });
+        break;
+      case 'cancelled':
+        this.finish('cancelled');
         break;
     }
   }
 
   private fail(error: ApiError): void {
-    this._reconnecting.set(false);
     this._error.set(error);
-    this._status.set('failed');
+    this.finish('failed');
+  }
+
+  /** 進入結束狀態；後端送完結束事件後會關閉串流，要先關掉 EventSource，避免它自動重新連線 */
+  private finish(status: 'done' | 'failed' | 'cancelled'): void {
+    this._reconnecting.set(false);
+    this._cancelling.set(false);
+    this._cancelError.set(null);
+    this._status.set(status);
     this.close();
   }
 }

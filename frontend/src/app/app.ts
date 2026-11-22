@@ -38,7 +38,7 @@ export class App {
   });
   protected readonly isFinished = computed(() => {
     const status = this.run()?.status();
-    return status === 'done' || status === 'failed';
+    return status === 'done' || status === 'failed' || status === 'cancelled';
   });
   protected readonly isBusy = computed(() => this.isProbing() || this.isAnalyzing());
   /** 曲目表中的曲目數，不含「未辨識」列 */
@@ -58,6 +58,9 @@ export class App {
 
   protected readonly phaseText = computed(() => {
     const run = this.run();
+    if (run?.cancelling()) {
+      return '正在取消';
+    }
     if (run === null || run.status() === 'starting') {
       return '正在建立分析任務';
     }
@@ -100,6 +103,10 @@ export class App {
     }
     this.clearRun();
     this.run.set(this.analysisJobs.start(video.videoId));
+  }
+
+  protected cancelAnalysis(): void {
+    void this.run()?.cancel();
   }
 
   /** 回到輸入網址的狀態，準備分析另一支影片 */

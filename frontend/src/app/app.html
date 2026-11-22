@@ -67,6 +67,12 @@
                 </div>
               }
             }
+            @case ('cancelled') {
+              <p class="done-status" role="status">
+                <span class="badge neutral">已取消</span>
+                分析已取消，暫存的音檔已刪除
+              </p>
+            }
             @default {
               <div class="analysis">
                 <p class="muted status" role="status">
@@ -92,13 +98,23 @@
                     <div class="progress-fill" [style.width.%]="progressPercent()"></div>
                   </div>
                 }
+                <div class="actions">
+                  <button type="button" [disabled]="run.cancelling()" (click)="cancelAnalysis()">
+                    {{ run.cancelling() ? '正在取消⋯' : '取消' }}
+                  </button>
+                </div>
+                @if (run.cancelError(); as error) {
+                  <div class="alert" role="alert">
+                    <p>無法取消分析：{{ error.message }}</p>
+                  </div>
+                }
               </div>
             }
           }
 
           @if (isFinished()) {
             <div class="actions">
-              @if (run.status() === 'failed') {
+              @if (run.status() === 'failed' || run.status() === 'cancelled') {
                 <button type="button" (click)="startAnalysis()">重新分析這支影片</button>
               }
               <button type="button" class="primary" (click)="reset()">分析其他影片</button>
@@ -122,7 +138,7 @@
   </section>
 
   @if (run(); as run) {
-    @if (run.status() !== 'failed' || run.rows().length > 0) {
+    @if (isAnalyzing() || run.status() === 'done' || run.rows().length > 0) {
       <section class="card" aria-labelledby="cuesheet-heading">
         <h2 id="cuesheet-heading">曲目表</h2>
 

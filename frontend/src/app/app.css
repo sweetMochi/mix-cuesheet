@@ -57,6 +57,11 @@ h2 {
   color: var(--error-fg);
 }
 
+.badge.neutral {
+  background: var(--border);
+  color: inherit;
+}
+
 .badge.warn {
   background: var(--warn-bg);
   color: var(--warn-fg);

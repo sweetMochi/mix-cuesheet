@@ -29,7 +29,9 @@ export type AnalysisEvent =
   /** 分析完成，附上最終曲目表 */
   | { type: 'done'; cuesheet: Cuesheet }
   /** 分析失敗；`message` 是給使用者看的繁體中文訊息 */
-  | { type: 'error'; code: AnalysisErrorCode; message: string; detail?: string };
+  | { type: 'error'; code: AnalysisErrorCode; message: string; detail?: string }
+  /** 收到取消信號，任務已停止 */
+  | { type: 'cancelled' };
 
 export type AnalysisSettings = SegmentPlanOptions & RecognitionOptions;
 
@@ -53,9 +55,10 @@ export interface AnalysisInput {
 export const WORK_DIR_PREFIX = 'mix-cuesheet-';
 
 /**
- * 執行一次分析任務，依序產出事件，最後一定是完成或錯誤事件
+ * 執行一次分析任務，依序產出事件，最後一定是完成、錯誤或已取消事件
  *
- * 不論完成或出錯，任務專屬的暫存資料夾都會在產生器結束前刪除
+ * `signal` 中止時停止送出新的辨識請求、中止進行中的子程序，並送出已取消事件。
+ * 不論完成、出錯或取消，任務專屬的暫存資料夾都會在產生器結束前刪除
  */
 export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<AnalysisEvent, void, undefined> {
   const { video, settings, audioSource, recognizer, signal } = input;
@@ -63,8 +66,12 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
   const now = input.now ?? Date.now;
   const phaseStartedAt: Record<AnalysisPhase, number> = { downloading: 0, splitting: 0, recognizing: 0 };
   let workDir: string | null = null;
+  // 取消時子程序或請求會以中止錯誤結束，這時要送出已取消事件，而不是錯誤事件
+  const failed = (error: unknown, code: AnalysisErrorCode, message: string): AnalysisEvent =>
+    signal?.aborted ? { type: 'cancelled' } : errorEvent(error, code, message);
 
   try {
+    signal?.throwIfAborted();
     workDir = await mkdtemp(path.join(input.tempRoot ?? tmpdir(), WORK_DIR_PREFIX));
 
     phaseStartedAt.downloading = now();
@@ -72,8 +79,9 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     let audio: PreparedAudio;
     try {
       audio = await audioSource.prepare(video.videoId, workDir, signal);
+      signal?.throwIfAborted();
     } catch (error) {
-      yield errorEvent(error, 'download-failed', '下載音訊失敗');
+      yield failed(error, 'download-failed', '下載音訊失敗');
       return;
     }
 
@@ -82,10 +90,11 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     const files: string[] = [];
     try {
       for (const segment of segments) {
+        signal?.throwIfAborted();
         files.push(await audio.extractSegment(segment, signal));
       }
     } catch (error) {
-      yield errorEvent(error, 'split-failed', '切割音訊失敗');
+      yield failed(error, 'split-failed', '切割音訊失敗');
       return;
     }
 
@@ -118,7 +127,7 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     );
     yield { type: 'done', cuesheet: cuesheet() };
   } catch (error) {
-    yield errorEvent(error, 'unexpected', '分析時發生未預期的錯誤');
+    yield failed(error, 'unexpected', '分析時發生未預期的錯誤');
   } finally {
     if (workDir !== null) {
       await removeWorkDir(workDir);

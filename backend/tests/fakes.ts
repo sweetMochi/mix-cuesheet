@@ -12,6 +12,8 @@ export const unusedJobs: AnalysisJobs = {
   start: () => {
     throw new Error('不應該建立分析任務');
   },
+  isBusy: () => false,
+  cancel: () => false,
   events: () => null,
 };
 
@@ -35,18 +37,31 @@ export interface FakeAudioSource extends AudioSource {
 /**
  * 假的音訊來源：在暫存資料夾寫出空的片段檔，檔名帶著起始秒數，讓假的辨識器依此決定結果
  */
-export function fakeAudioSource(options: { prepareError?: unknown; extractError?: unknown } = {}): FakeAudioSource {
+export function fakeAudioSource(
+  options: {
+    prepareError?: unknown;
+    extractError?: unknown;
+    /** 在這個步驟一直等到取消信號中止，再像子程序被終止一樣丟出中止錯誤 */
+    hangIn?: 'prepare' | 'extract';
+  } = {},
+): FakeAudioSource {
   const source: FakeAudioSource = {
     workDirs: [],
     extracted: [],
-    async prepare(_videoId, workDir) {
+    async prepare(_videoId, workDir, signal) {
       source.workDirs.push(workDir);
       await writeFile(path.join(workDir, 'audio.webm'), '');
+      if (options.hangIn === 'prepare') {
+        await untilAborted(signal);
+      }
       if (options.prepareError !== undefined) {
         throw options.prepareError;
       }
       return {
-        async extractSegment(segment) {
+        async extractSegment(segment, segmentSignal) {
+          if (options.hangIn === 'extract') {
+            await untilAborted(segmentSignal);
+          }
           if (options.extractError !== undefined) {
             throw options.extractError;
           }
@@ -59,6 +74,17 @@ export function fakeAudioSource(options: { prepareError?: unknown; extractError?
     },
   };
   return source;
+}
+
+/** 等到 `signal` 中止後丟出中止錯誤；沒有 `signal` 時永遠不會結束 */
+export function untilAborted(signal?: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    const abort = () => reject(new DOMException('aborted', 'AbortError'));
+    if (signal?.aborted) {
+      abort();
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 export interface FakeRecognizer extends Recognizer {

@@ -43,7 +43,8 @@ export interface RecognizeSegmentsInput {
 /**
  * 辨識所有片段，依完成的先後產出結果；完成順序不一定和輸入順序相同
  *
- * 每個片段一定會產出一個結果：辨識失敗不會中斷其他片段
+ * 每個片段一定會產出一個結果：辨識失敗不會中斷其他片段。
+ * `signal` 中止時不再送出新的請求，並丟出中止的原因
  */
 export async function* recognizeSegments(
   input: RecognizeSegmentsInput,
@@ -52,6 +53,7 @@ export async function* recognizeSegments(
   if (!(options.concurrency >= 1)) {
     throw new RangeError('同時請求數必須至少為 1');
   }
+  signal?.throwIfAborted();
 
   const cooldown = new Cooldown(sleep, signal);
   const finished: RecognizedSegment[] = [];
@@ -61,7 +63,7 @@ export async function* recognizeSegments(
   let nextIndex = 0;
 
   const worker = async () => {
-    while (nextIndex < files.length) {
+    while (nextIndex < files.length && signal?.aborted !== true) {
       const index = nextIndex++;
       const track = await recognizeWithRetry(recognizer, files[index]!, cooldown, options, signal);
       finished.push({ index, track });
@@ -75,23 +77,33 @@ export async function* recognizeSegments(
     });
   }
 
-  for (let yielded = 0; yielded < files.length; ) {
-    if (failure !== null) {
-      throw failure.error;
+  // 中止時不等進行中的請求結束，直接喚醒並丟出
+  const onAbort = () => wake?.();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    for (let yielded = 0; yielded < files.length; ) {
+      signal?.throwIfAborted();
+      if (failure !== null) {
+        throw failure.error;
+      }
+      const result = finished.shift();
+      if (result === undefined) {
+        await new Promise<void>((resolve) => (wake = resolve));
+        wake = null;
+        continue;
+      }
+      yielded += 1;
+      yield result;
     }
-    const result = finished.shift();
-    if (result === undefined) {
-      await new Promise<void>((resolve) => (wake = resolve));
-      wake = null;
-      continue;
-    }
-    yielded += 1;
-    yield result;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
 /**
  * 辨識一個片段；被限流時等共用冷卻結束後重試，重試用完或遇到其他錯誤時視為無結果
+ *
+ * `signal` 中止時丟出中止的原因，不視為無結果
  */
 async function recognizeWithRetry(
   recognizer: Recognizer,
@@ -102,9 +114,11 @@ async function recognizeWithRetry(
 ): Promise<RecognizedTrack | null> {
   for (let retries = 0; ; retries++) {
     await cooldown.wait();
+    signal?.throwIfAborted();
     try {
       return await recognizer.recognize(file, signal);
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof RateLimitedError && retries < options.retryAttempts) {
         cooldown.extend(backoffMs(retries, options));
         continue;

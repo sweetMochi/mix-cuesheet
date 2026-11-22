@@ -34,7 +34,14 @@ export interface CreateJobResponse {
   jobId: string;
 }
 
-export type ProbeErrorCode = 'bad-request' | 'not-found' | UrlRejection | VideoAccessFailure | 'too-long';
+export type ProbeErrorCode =
+  | 'bad-request'
+  | 'not-found'
+  | UrlRejection
+  | VideoAccessFailure
+  | 'too-long'
+  /** 已經有分析任務在執行 */
+  | 'job-running';
 
 export interface ApiErrorResponse {
   error: {
@@ -119,13 +126,30 @@ export function createApp(deps: AppDeps): Hono {
       return errorResponse(c, 400, 'bad-request', '請求格式錯誤，必須包含合法的 videoId 欄位');
     }
 
+    // 先擋下來，省得多讀一次影片資訊；讀取期間可能有別的任務開始，所以建立時還會再檢查一次
+    if (deps.jobs.isBusy()) {
+      return jobRunningResponse(c);
+    }
+
     // 重新讀取影片資訊，以 yt-dlp 回報的長度切段，不採信用戶端傳來的資料
     const video = await readAnalyzableVideo(c, deps.probeVideo, body.data.videoId);
     if (video instanceof Response) {
       return video;
     }
 
-    return c.json<CreateJobResponse>({ jobId: deps.jobs.start(video) }, 201);
+    const jobId = deps.jobs.start(video);
+    if (jobId === null) {
+      return jobRunningResponse(c);
+    }
+    return c.json<CreateJobResponse>({ jobId }, 201);
+  });
+
+  app.delete('/api/jobs/:jobId', (c) => {
+    if (!deps.jobs.cancel(c.req.param('jobId'))) {
+      return errorResponse(c, 404, 'not-found', '找不到這個分析任務，可能已經結束太久');
+    }
+    // 取消是非同步的：任務停止後會在事件串流送出已取消事件
+    return c.body(null, 202);
   });
 
   app.get('/api/jobs/:jobId/events', (c) => {
@@ -159,6 +183,10 @@ function errorResponse(
   extra: Omit<ApiErrorResponse['error'], 'code' | 'message'> = {},
 ): Response {
   return c.json<ApiErrorResponse>({ error: { code, message, ...extra } }, status);
+}
+
+function jobRunningResponse(c: Context): Response {
+  return errorResponse(c, 409, 'job-running', '已經有分析任務在執行，請等它結束或取消後再開始新的分析');
 }
 
 /**

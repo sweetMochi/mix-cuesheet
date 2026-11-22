@@ -1,6 +1,6 @@
 /** npm 套件提供的外部 CLI 工具 */
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -63,28 +63,72 @@ const STDERR_TAIL_CHARS = 64 * 1024;
  * 執行外部工具直到結束，不讀取 stdout
  *
  * 結束代碼不是 0 時丟出 `ToolExitError`；執行檔不存在時丟出 `code` 為 `ENOENT` 的錯誤；
- * 中止時終止子程序並丟出 `AbortError`
+ * 中止時終止整個程序樹，等子程序結束後丟出 `AbortError`
  */
 export function runTool(toolPath: string, args: readonly string[], signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
     const child = spawn(toolPath, args, {
       stdio: ['ignore', 'ignore', 'pipe'],
-      signal,
       windowsHide: true,
     });
     let stderr = '';
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      killTree(child);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       stderr = (stderr + chunk).slice(-STDERR_TAIL_CHARS);
     });
-    child.on('error', reject);
+    child.on('error', (error) => {
+      signal?.removeEventListener('abort', onAbort);
+      reject(error);
+    });
+    // 等子程序真的結束才回報中止，之後刪除暫存資料夾時檔案不會還被佔用
     child.on('close', (exitCode) => {
-      if (exitCode === 0) {
+      signal?.removeEventListener('abort', onAbort);
+      if (aborted) {
+        reject(abortError());
+      } else if (exitCode === 0) {
         resolve();
       } else {
         reject(new ToolExitError(toolPath, exitCode, stderr));
       }
     });
+  });
+}
+
+function abortError(): Error {
+  return new DOMException('外部工具已中止', 'AbortError');
+}
+
+/**
+ * 終止子程序以及它啟動的所有子程序
+ *
+ * Windows 上終止一個程序不會連帶終止它的子程序；yt-dlp 的執行檔是 PyInstaller 打包的，
+ * 啟動後會再開一個子程序執行，所以要以 `taskkill /T` 終止整個程序樹，否則會留下孤兒程序
+ */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  if (process.platform !== 'win32') {
+    child.kill('SIGTERM');
+    return;
+  }
+  execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, (error) => {
+    // 程序剛好自己結束時 taskkill 會失敗；仍在執行時至少終止這個程序本身
+    if (error !== null && child.exitCode === null && child.signalCode === null) {
+      child.kill();
+    }
   });
 }
 

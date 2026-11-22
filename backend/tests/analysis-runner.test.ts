@@ -17,6 +17,7 @@ import {
   manualSleep,
   sequence,
   track,
+  untilAborted,
   type FakeAudioSource,
 } from './fakes.ts';
 
@@ -49,8 +50,9 @@ interface AnalyzeOptions {
   now?: () => number;
   /** 預設不輸出 */
   log?: (message: string) => void;
-  /** 每收到一個事件就呼叫，用來在事件之間推進假時鐘 */
+  /** 每收到一個事件就呼叫，用來在事件之間推進假時鐘或送出取消信號 */
   onEvent?: (event: AnalysisEvent) => void;
+  signal?: AbortSignal;
 }
 
 async function analyze(
@@ -70,6 +72,7 @@ async function analyze(
     sleep: options.sleep ?? instantSleep().sleep,
     now: options.now,
     log: options.log ?? (() => {}),
+    signal: options.signal,
   })) {
     events.push(event);
     options.onEvent?.(event);
@@ -515,5 +518,125 @@ describe('runAnalysis', () => {
     await analyze(60, () => null, { audioSource });
 
     expect(await readdir(tempRoot)).toEqual([]);
+  });
+
+  describe('取消', () => {
+    /** 收到指定的事件後送出取消信號 */
+    function cancelOn(match: (event: AnalysisEvent) => boolean) {
+      const controller = new AbortController();
+      return {
+        signal: controller.signal,
+        onEvent: (event: AnalysisEvent) => {
+          if (match(event)) {
+            controller.abort();
+          }
+        },
+      };
+    }
+
+    it('下載階段取消時送出已取消事件，不切割也不辨識，並刪除暫存資料夾', async () => {
+      const audioSource = fakeAudioSource({ hangIn: 'prepare' });
+
+      const { events, recognizer } = await analyze(60, () => track('A'), {
+        audioSource,
+        ...cancelOn((event) => event.type === 'phase' && event.phase === 'downloading'),
+      });
+
+      expect(events.at(-1)).toEqual({ type: 'cancelled' });
+      expect(events.some((event) => event.type === 'error' || event.type === 'done')).toBe(false);
+      expect(audioSource.extracted).toEqual([]);
+      expect(recognizer.calls).toEqual([]);
+      expect(await readdir(tempRoot)).toEqual([]);
+    });
+
+    it('切割階段取消時送出已取消事件，不辨識，並刪除暫存資料夾', async () => {
+      const audioSource = fakeAudioSource({ hangIn: 'extract' });
+
+      const { events, recognizer } = await analyze(60, () => track('A'), {
+        audioSource,
+        ...cancelOn((event) => event.type === 'phase' && event.phase === 'splitting'),
+      });
+
+      expect(events.at(-1)).toEqual({ type: 'cancelled' });
+      expect(events.some((event) => event.type === 'error')).toBe(false);
+      expect(recognizer.calls).toEqual([]);
+      expect(await readdir(tempRoot)).toEqual([]);
+    });
+
+    it('辨識階段取消時送出已取消事件，不再呼叫辨識器，並刪除暫存資料夾', async () => {
+      let calls = 0;
+      let callsAtCancel = -1;
+      const controller = new AbortController();
+
+      const { events } = await analyze(
+        400,
+        async () => {
+          calls += 1;
+          await wait(1);
+          return track('A');
+        },
+        {
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (event.type === 'progress' && event.completed === 3) {
+              callsAtCancel = calls;
+              controller.abort();
+            }
+          },
+        },
+      );
+      // 等進行中的請求都結束，確認之後沒有再送出新的請求
+      await wait(20);
+
+      expect(events.at(-1)).toEqual({ type: 'cancelled' });
+      expect(events.some((event) => event.type === 'done' || event.type === 'error')).toBe(false);
+      expect(calls).toBe(callsAtCancel);
+      expect(calls).toBeLessThan(20);
+      expect(await readdir(tempRoot)).toEqual([]);
+    });
+
+    it('限流冷卻期間取消時，冷卻結束後不再呼叫辨識器', async () => {
+      const controller = new AbortController();
+      const delays: number[] = [];
+      const sleep: Sleep = (ms, signal) => {
+        delays.push(ms);
+        return untilAborted(signal);
+      };
+
+      const running = analyze(
+        60,
+        () => {
+          throw new RateLimitedError();
+        },
+        { sleep, signal: controller.signal, settings: { concurrency: 1 } },
+      );
+      await vi.waitFor(() => expect(delays).toHaveLength(1));
+      controller.abort();
+      const { events, recognizer } = await running;
+
+      expect(events.at(-1)).toEqual({ type: 'cancelled' });
+      expect(recognizer.calls).toEqual([0]);
+      expect(await readdir(tempRoot)).toEqual([]);
+    });
+
+    it('辨識器因取消而中止請求時，該片段不算無結果，也不再辨識其他片段', async () => {
+      const controller = new AbortController();
+
+      const { events, recognizer } = await analyze(
+        60,
+        async (start) => {
+          if (start === 0) {
+            controller.abort();
+            throw new DOMException('aborted', 'AbortError');
+          }
+          return track('A');
+        },
+        { signal: controller.signal, settings: { concurrency: 1 } },
+      );
+
+      expect(events.at(-1)).toEqual({ type: 'cancelled' });
+      expect(events.some((event) => event.type === 'cuesheet' && event.cuesheet.rows.length > 0)).toBe(false);
+      expect(recognizer.calls).toEqual([0]);
+    });
   });
 });

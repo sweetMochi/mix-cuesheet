@@ -26,12 +26,13 @@ if (!existsSync(config.FRONTEND_DIST_DIR)) {
 }
 
 const recognizer = createShazamRecognizer();
-const jobs = createAnalysisJobs((video) =>
+const jobs = createAnalysisJobs((video, signal) =>
   runAnalysis({
     video,
     settings: config.ANALYSIS_SETTINGS,
     audioSource: ytDlpAudioSource,
     recognizer,
+    signal,
   }),
 );
 
