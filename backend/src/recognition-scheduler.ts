@@ -1,21 +1,19 @@
 /**
- * 辨識排程：以有上限的並行度送出辨識請求，遇到限流時以共用冷卻加指數退避重試
+ * 辨識排程：依片段順序一次送出一個辨識請求，遇到限流時以指數退避重試
  *
- * Shazam 的限流以 IP 計算，一個請求被限流時，其他同時進行的請求多半也會被限流，
- * 所以冷卻是所有請求共用的：任一片段被限流時，所有請求都先暫停，等冷卻結束再送出
+ * Shazam 的限流以 IP 計算，實際速度由補名額的速度決定，同時送出多個請求只會互相搶名額，
+ * 實測反而更慢、失敗更多（見 config.ts 的註解），所以不並行
  */
 
 import { setTimeout as delay } from 'node:timers/promises';
 import { RateLimitedError, type RecognizedTrack, type Recognizer } from './recognizer.ts';
 
 export interface RecognitionOptions {
-  /** 同時送出的辨識請求數 */
-  concurrency: number;
   /** 單一片段遇到限流時最多重試幾次 */
   retryAttempts: number;
-  /** 片段第一次重試前的冷卻時間（毫秒），之後每重試一次加倍 */
+  /** 片段第一次重試前的等待時間（毫秒），之後每重試一次加倍 */
   backoffBaseMs: number;
-  /** 單次冷卻時間的上限（毫秒） */
+  /** 單次等待時間的上限（毫秒） */
   backoffMaxMs: number;
 }
 
@@ -47,7 +45,7 @@ export interface RecognizeSegmentsInput {
 }
 
 /**
- * 辨識所有片段，依完成的先後產出結果；完成順序不一定和輸入順序相同
+ * 依序辨識所有片段，前一段完成後才送出下一段，結果依輸入順序產出
  *
  * 每個片段一定會產出一個結果：辨識失敗不會中斷其他片段，失敗原因附在結果中，由呼叫端決定如何記錄。
  * `signal` 中止時不再送出新的請求，並丟出中止的原因
@@ -56,71 +54,26 @@ export async function* recognizeSegments(
   input: RecognizeSegmentsInput,
 ): AsyncGenerator<RecognizedSegment, void, undefined> {
   const { files, recognizer, options, sleep, signal } = input;
-  if (!(options.concurrency >= 1)) {
-    throw new RangeError('同時請求數必須至少為 1');
-  }
-  signal?.throwIfAborted();
-
-  const cooldown = new Cooldown(sleep, signal);
-  const finished: RecognizedSegment[] = [];
-  // 在 worker 的回呼中設定，以 `as` 避免 TypeScript 把它收窄成永遠是空值
-  let failure = null as { error: unknown } | null;
-  let wake: (() => void) | null = null;
-  let nextIndex = 0;
-
-  const worker = async () => {
-    while (nextIndex < files.length && signal?.aborted !== true) {
-      const index = nextIndex++;
-      const outcome = await recognizeWithRetry(recognizer, files[index]!, cooldown, options, signal);
-      finished.push({ index, ...outcome });
-      wake?.();
-    }
-  };
-  for (let i = 0; i < Math.min(options.concurrency, files.length); i++) {
-    worker().catch((error: unknown) => {
-      failure ??= { error };
-      wake?.();
-    });
-  }
-
-  // 中止時不等進行中的請求結束，直接喚醒並丟出
-  const onAbort = () => wake?.();
-  signal?.addEventListener('abort', onAbort);
-  try {
-    for (let yielded = 0; yielded < files.length; ) {
-      signal?.throwIfAborted();
-      if (failure !== null) {
-        throw failure.error;
-      }
-      const result = finished.shift();
-      if (result === undefined) {
-        await new Promise<void>((resolve) => (wake = resolve));
-        wake = null;
-        continue;
-      }
-      yielded += 1;
-      yield result;
-    }
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
+  for (const [index, file] of files.entries()) {
+    signal?.throwIfAborted();
+    yield { index, ...(await recognizeWithRetry(recognizer, file, options, sleep, signal)) };
   }
 }
 
 /**
- * 辨識一個片段；被限流時等共用冷卻結束後重試，重試用完或遇到其他錯誤時視為無結果並附上原因
+ * 辨識一個片段；被限流時等待退避時間後重試，重試用完或遇到其他錯誤時視為無結果並附上原因
  *
  * `signal` 中止時丟出中止的原因，不視為無結果
  */
 async function recognizeWithRetry(
   recognizer: Recognizer,
   file: string,
-  cooldown: Cooldown,
   options: RecognitionOptions,
+  sleep: Sleep,
   signal?: AbortSignal,
 ): Promise<Omit<RecognizedSegment, 'index'>> {
   let requests = 0;
   for (let retries = 0; ; retries++) {
-    await cooldown.wait();
     signal?.throwIfAborted();
     try {
       requests += 1;
@@ -129,7 +82,8 @@ async function recognizeWithRetry(
     } catch (error) {
       signal?.throwIfAborted();
       if (error instanceof RateLimitedError && retries < options.retryAttempts) {
-        cooldown.extend(backoffMs(retries, options));
+        // 任務中止時等待會提早結束，交給下一輪開頭丟出中止的原因
+        await sleep(backoffMs(retries, options), signal).catch(() => undefined);
         continue;
       }
       const isRateLimited = error instanceof RateLimitedError;
@@ -143,42 +97,7 @@ async function recognizeWithRetry(
   }
 }
 
-/** 第 `retries` 次重試（從 0 起算）前的冷卻時間 */
+/** 第 `retries` 次重試（從 0 起算）前的等待時間 */
 function backoffMs(retries: number, options: RecognitionOptions): number {
   return Math.min(options.backoffBaseMs * 2 ** retries, options.backoffMaxMs);
-}
-
-/** 所有辨識請求共用的冷卻；冷卻期間不送出新的請求 */
-class Cooldown {
-  private readonly sleep: Sleep;
-  private readonly signal: AbortSignal | undefined;
-  private gate: Promise<void> | null = null;
-
-  constructor(sleep: Sleep, signal?: AbortSignal) {
-    this.sleep = sleep;
-    this.signal = signal;
-  }
-
-  /** 讓冷卻從現在起至少再持續 `ms` 毫秒；和進行中的冷卻重疊時，以較晚結束的為準 */
-  extend(ms: number): void {
-    const gate: Promise<void> = Promise.all([this.gate, this.sleep(ms, this.signal)])
-      .then(
-        () => undefined,
-        // 任務中止時冷卻提早結束，交給辨識器處理中止
-        () => undefined,
-      )
-      .finally(() => {
-        if (this.gate === gate) {
-          this.gate = null;
-        }
-      });
-    this.gate = gate;
-  }
-
-  /** 等到沒有冷卻為止；等待期間冷卻被延長時繼續等 */
-  async wait(): Promise<void> {
-    while (this.gate !== null) {
-      await this.gate;
-    }
-  }
 }

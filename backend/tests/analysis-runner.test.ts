@@ -25,7 +25,6 @@ const settings: AnalysisSettings = {
   segmentSeconds: 12,
   stepSeconds: 20,
   minSegmentSeconds: 5,
-  concurrency: 2,
   retryAttempts: 3,
   backoffBaseMs: 5000,
   backoffMaxMs: 30000,
@@ -279,44 +278,15 @@ describe('runAnalysis', () => {
     expect(last(events, 'done')!.cuesheet.rows.map((row) => row.startText)).toEqual(['00:00', '1:00:00']);
   });
 
-  describe('並行辨識', () => {
-    it('同時進行的辨識請求數不超過設定的並行度', async () => {
-      const { recognizer, events } = await analyze(
-        200,
-        async () => {
-          await wait(1);
-          return null;
-        },
-        { settings: { concurrency: 3 } },
-      );
-
-      expect(recognizer.maxInFlight).toBe(3);
-      expect(recognizer.calls.toSorted((a, b) => a - b)).toEqual([0, 20, 40, 60, 80, 100, 120, 140, 160, 180]);
-      expect(last(events, 'progress')).toEqual({ type: 'progress', completed: 10, total: 10 });
+  it('依片段順序一次送出一個辨識請求，前一段完成後才送出下一段', async () => {
+    const { recognizer, events } = await analyze(200, async () => {
+      await wait(1);
+      return null;
     });
 
-    it('辨識結果亂序完成時，快照仍依開始時間排序，待處理的片段不算無結果', async () => {
-      // 片段 0 最後才完成，20、40、60 先完成
-      const { events } = await analyze(80, async (start) => {
-        if (start === 0) {
-          await wait(1);
-          return track('A');
-        }
-        return start === 60 ? track('B') : null;
-      });
-
-      expect(snapshots(events)).toEqual([
-        // 片段 20 無結果，0 待處理
-        [],
-        // 片段 20、40 無結果；0 待處理，不會和它們連成 00:00 起的區間
-        ['00:20–01:00 未辨識'],
-        ['00:20–01:00 未辨識', '01:00 B×1（僅命中 1 次）'],
-        ['00:00 A×1（僅命中 1 次）', '00:20–01:00 未辨識', '01:00 B×1（僅命中 1 次）'],
-      ]);
-      expect(events.filter((event) => event.type === 'progress').map((event) => event.completed)).toEqual([
-        0, 1, 2, 3, 4,
-      ]);
-    });
+    expect(recognizer.maxInFlight).toBe(1);
+    expect(recognizer.calls).toEqual([0, 20, 40, 60, 80, 100, 120, 140, 160, 180]);
+    expect(last(events, 'progress')).toEqual({ type: 'progress', completed: 10, total: 10 });
   });
 
   describe('限流重試', () => {
@@ -373,32 +343,29 @@ describe('runAnalysis', () => {
       expect(delays).toEqual([]);
     });
 
-    it('任一片段被限流時，所有請求都等冷卻結束才送出', async () => {
+    it('被限流時等退避時間結束才重試，之後才送出下一段', async () => {
       const calls: number[] = [];
       const at0 = sequence(new RateLimitedError(), track('A'));
       const { sleep, delays, release } = manualSleep();
 
       const running = analyze(
         80,
-        async (start) => {
+        (start) => {
           calls.push(start);
-          if (start === 0) return at0();
-          if (start === 20) await wait(1);
-          return track('A');
+          return start === 0 ? at0() : track('A');
         },
         { sleep },
       );
 
-      // 片段 0 被限流後進入冷卻；片段 20 在冷卻期間完成，但下一個片段 40 要等冷卻結束才送出
-      await vi.waitFor(() => expect(delays).toHaveLength(1));
+      // 片段 0 被限流後進入退避等待，等待期間不會送出任何請求
+      await vi.waitFor(() => expect(delays).toEqual([5000]));
       await wait(20);
-      expect(calls).toEqual([0, 20]);
-      expect(delays).toEqual([5000]);
+      expect(calls).toEqual([0]);
 
       release();
       const { events } = await running;
 
-      expect(calls.toSorted((a, b) => a - b)).toEqual([0, 0, 20, 40, 60]);
+      expect(calls).toEqual([0, 0, 20, 40, 60]);
       expect(finalRows(events)).toEqual(['00:00 A×4']);
     });
   });
@@ -654,7 +621,7 @@ describe('runAnalysis', () => {
       expect(await readdir(tempRoot)).toEqual([]);
     });
 
-    it('限流冷卻期間取消時，冷卻結束後不再呼叫辨識器', async () => {
+    it('限流等待期間取消時，不再呼叫辨識器', async () => {
       const controller = new AbortController();
       const delays: number[] = [];
       const sleep: Sleep = (ms, signal) => {
@@ -667,7 +634,7 @@ describe('runAnalysis', () => {
         () => {
           throw new RateLimitedError();
         },
-        { sleep, signal: controller.signal, settings: { concurrency: 1 } },
+        { sleep, signal: controller.signal },
       );
       await vi.waitFor(() => expect(delays).toHaveLength(1));
       controller.abort();
@@ -690,7 +657,7 @@ describe('runAnalysis', () => {
           }
           return track('A');
         },
-        { signal: controller.signal, settings: { concurrency: 1 } },
+        { signal: controller.signal },
       );
 
       expect(events.at(-1)).toEqual({ type: 'cancelled' });

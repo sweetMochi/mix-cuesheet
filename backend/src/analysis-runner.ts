@@ -1,5 +1,5 @@
 /**
- * 分析任務執行器：下載混音影片的音訊、切出片段、並行辨識，並以一連串事件回報進度與曲目表
+ * 分析任務執行器：下載混音影片的音訊、切出片段、依序辨識，並以一連串事件回報進度與曲目表
  *
  * 音訊來源與辨識器都由外部注入，測試時可以換成假的實作
  */
@@ -41,7 +41,7 @@ export interface AnalysisInput {
   audioSource: AudioSource;
   recognizer: Recognizer;
   signal?: AbortSignal;
-  /** 限流冷卻的等待方式；預設真的等待，測試時可以換成立即返回 */
+  /** 限流退避的等待方式；預設真的等待，測試時可以換成立即返回 */
   sleep?: Sleep;
   /** 任務暫存資料夾建立在這個資料夾底下；預設為系統的暫存資料夾 */
   tempRoot?: string;
@@ -106,7 +106,7 @@ export async function* runAnalysis(input: AnalysisInput): AsyncGenerator<Analysi
     const results: SegmentResult[] = [];
     const stats: RecognitionStats = { requests: 0, rateLimited: 0, failedStartSeconds: [] };
     const cuesheet = () => buildCuesheet({ segments, durationSeconds: video.durationSeconds, results });
-    // 結果依完成的先後回來；曲目表依片段起始時間計算，順序不影響快照
+    // 結果依片段順序回來，後面還沒辨識的片段在快照中是待處理
     for await (const { index, track, failureReason, requests, rateLimited } of recognizeSegments({
       files,
       recognizer,
@@ -178,7 +178,7 @@ interface RecognitionStats {
   requests: number;
   /** 被限流的總次數 */
   rateLimited: number;
-  /** 辨識失敗的片段起始秒數，依完成的先後排列 */
+  /** 辨識失敗的片段起始秒數，依片段順序排列 */
   failedStartSeconds: number[];
 }
 
@@ -188,7 +188,7 @@ interface RecognitionStats {
  */
 function formatRecognitionStats(stats: RecognitionStats, segmentCount: number, recognizingMs: number): string {
   const perSegment = segmentCount === 0 ? 0 : recognizingMs / 1000 / segmentCount;
-  const failed = stats.failedStartSeconds.toSorted((a, b) => a - b).map((seconds) => formatTimestamp(seconds));
+  const failed = stats.failedStartSeconds.map((seconds) => formatTimestamp(seconds));
   return (
     `辨識統計：平均每段 ${perSegment.toFixed(1)} 秒，請求 ${stats.requests} 次、被限流 ${stats.rateLimited} 次，` +
     `失敗 ${failed.length} 段${failed.length > 0 ? `（${failed.join('、')}）` : ''}`

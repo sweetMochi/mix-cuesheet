@@ -97,7 +97,7 @@ export interface FakeRecognizer extends Recognizer {
 /**
  * 假的辨識器：依片段的起始秒數回傳結果，函式丟出的錯誤會原樣丟出
  *
- * 函式可以回傳 Promise，用來控制各片段完成的先後
+ * 函式可以回傳 Promise，用來模擬請求需要的時間
  */
 export function fakeRecognizer(
   resultAt: (startSeconds: number) => RecognizedTrack | null | Promise<RecognizedTrack | null>,
