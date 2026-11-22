@@ -22,7 +22,7 @@ export interface TrackRow {
   track: RecognizedTrack;
   /** 整支影片中命中這首曲目的片段數 */
   hitCount: number;
-  /** 「僅命中 1 次」標記：整支影片中只有 1 個片段命中這首曲目 */
+  /** 「待確認」標記：整支影片中只有 1 個片段命中這首曲目 */
   singleHit: boolean;
 }
 

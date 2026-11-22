@@ -96,12 +96,12 @@ function tracksAt(map: Record<number, string | null>) {
 
 /**
  * 把曲目表寫成容易比對的字串：
- * 曲目列為 `開始時間 識別碼×命中次數`，「僅命中 1 次」加上 `（僅命中 1 次）`；「未辨識」列為 `開始–結束 未辨識`
+ * 曲目列為 `開始時間 識別碼×命中次數`，「待確認」加上 `（待確認）`；「未辨識」列為 `開始–結束 未辨識`
  */
 function describeRows(cuesheet: Cuesheet) {
   return cuesheet.rows.map((row) =>
     row.kind === 'track'
-      ? `${row.startText} ${row.track.trackId}×${row.hitCount}${row.singleHit ? '（僅命中 1 次）' : ''}`
+      ? `${row.startText} ${row.track.trackId}×${row.hitCount}${row.singleHit ? '（待確認）' : ''}`
       : `${row.startText}–${row.endText} 未辨識`,
   );
 }
@@ -158,9 +158,9 @@ describe('runAnalysis', () => {
     const { events } = await analyze(60, tracksAt({ 0: 'A', 20: 'A', 40: 'B' }));
 
     expect(snapshots(events)).toEqual([
-      ['00:00 A×1（僅命中 1 次）'],
+      ['00:00 A×1（待確認）'],
       ['00:00 A×2'],
-      ['00:00 A×2', '00:40 B×1（僅命中 1 次）'],
+      ['00:00 A×2', '00:40 B×1（待確認）'],
     ]);
   });
 
@@ -182,7 +182,7 @@ describe('runAnalysis', () => {
         return { ...track('B'), artist: 'Artist A', title: 'Title A' };
       });
 
-      expect(finalRows(events)).toEqual(['00:00 A×2', '00:40 B×1（僅命中 1 次）']);
+      expect(finalRows(events)).toEqual(['00:00 A×2', '00:40 B×1（待確認）']);
     });
 
     it('同一首被其他曲目隔開後再出現時仍只有一列，開始時間取最早一次命中', async () => {
@@ -200,26 +200,26 @@ describe('runAnalysis', () => {
         tracksAt({ 0: 'A', 20: null, 40: 'A', 60: null, 80: null, 100: 'A', 120: 'B' }),
       );
 
-      expect(finalRows(events)).toEqual(['00:00 A×3', '01:00–01:40 未辨識', '02:00 B×1（僅命中 1 次）']);
+      expect(finalRows(events)).toEqual(['00:00 A×3', '01:00–01:40 未辨識', '02:00 B×1（待確認）']);
     });
 
-    it('「僅命中 1 次」以整支影片的總命中次數判斷', async () => {
+    it('「待確認」以整支影片的總命中次數判斷', async () => {
       const { events } = await analyze(80, tracksAt({ 0: 'A', 20: 'B', 40: 'C', 60: 'A' }));
 
-      expect(snapshots(events)[0]).toEqual(['00:00 A×1（僅命中 1 次）']);
-      expect(finalRows(events)).toEqual(['00:00 A×2', '00:20 B×1（僅命中 1 次）', '00:40 C×1（僅命中 1 次）']);
+      expect(snapshots(events)[0]).toEqual(['00:00 A×1（待確認）']);
+      expect(finalRows(events)).toEqual(['00:00 A×2', '00:20 B×1（待確認）', '00:40 C×1（待確認）']);
     });
 
     it('單一個無結果片段不產生「未辨識」列', async () => {
       const { events } = await analyze(100, tracksAt({ 0: null, 20: 'A', 40: null, 60: 'B', 80: null }));
 
-      expect(finalRows(events)).toEqual(['00:20 A×1（僅命中 1 次）', '01:00 B×1（僅命中 1 次）']);
+      expect(finalRows(events)).toEqual(['00:20 A×1（待確認）', '01:00 B×1（待確認）']);
     });
 
     it('連續 2 個以上的無結果片段合併成一列「未辨識」，到下一個片段的起始時間為止', async () => {
       const { events } = await analyze(120, tracksAt({ 0: 'A', 20: null, 40: null, 60: null, 80: 'B', 100: 'B' }));
 
-      expect(finalRows(events)).toEqual(['00:00 A×1（僅命中 1 次）', '00:20–01:20 未辨識', '01:20 B×2']);
+      expect(finalRows(events)).toEqual(['00:00 A×1（待確認）', '00:20–01:20 未辨識', '01:20 B×2']);
       expect(last(events, 'done')!.cuesheet.rows[1]).toEqual({
         kind: 'unrecognized',
         startSeconds: 20,
@@ -251,9 +251,9 @@ describe('runAnalysis', () => {
       expect(finalRows(events)).toEqual([
         '00:00–00:40 未辨識',
         '00:40 A×2',
-        '01:00 B×1（僅命中 1 次）',
+        '01:00 B×1（待確認）',
         '01:20–02:00 未辨識',
-        '02:20 C×1（僅命中 1 次）',
+        '02:20 C×1（待確認）',
       ]);
     });
 
@@ -261,13 +261,13 @@ describe('runAnalysis', () => {
       const { events } = await analyze(100, tracksAt({ 0: 'A' }));
 
       expect(snapshots(events)).toEqual([
-        ['00:00 A×1（僅命中 1 次）'],
+        ['00:00 A×1（待確認）'],
         // 片段 20 無結果、40 以後待處理：單一個無結果片段，不算「未辨識」
-        ['00:00 A×1（僅命中 1 次）'],
+        ['00:00 A×1（待確認）'],
         // 片段 20、40 無結果，60 待處理：區間在待處理的片段前結束
-        ['00:00 A×1（僅命中 1 次）', '00:20–01:00 未辨識'],
-        ['00:00 A×1（僅命中 1 次）', '00:20–01:20 未辨識'],
-        ['00:00 A×1（僅命中 1 次）', '00:20–01:40 未辨識'],
+        ['00:00 A×1（待確認）', '00:20–01:00 未辨識'],
+        ['00:00 A×1（待確認）', '00:20–01:20 未辨識'],
+        ['00:00 A×1（待確認）', '00:20–01:40 未辨識'],
       ]);
     });
   });
@@ -315,9 +315,9 @@ describe('runAnalysis', () => {
 
       // 片段 20 重試用完、40 無結果，連成一段「未辨識」
       expect(finalRows(events)).toEqual([
-        '00:00 A×1（僅命中 1 次）',
+        '00:00 A×1（待確認）',
         '00:20–01:00 未辨識',
-        '01:00 B×1（僅命中 1 次）',
+        '01:00 B×1（待確認）',
       ]);
       expect(recognizer.calls.filter((start) => start === 20)).toHaveLength(5);
       // 每次加倍，超過上限時取上限
