@@ -1,6 +1,7 @@
-import { Component, computed, ElementRef, inject, signal, viewChild } from '@angular/core';
+import { Component, computed, DestroyRef, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { AnalysisJobService, AnalysisPhase, AnalysisRun } from './analysis-job';
 import { ApiError } from './api-error';
+import { estimateRemainingMs, formatRemaining } from './eta';
 import { healthResource } from './health';
 import { ProbeState, VideoProbeService } from './video-probe';
 
@@ -22,6 +23,9 @@ export class App {
   private readonly urlInput = viewChild.required<ElementRef<HTMLInputElement>>('urlInput');
 
   protected readonly health = healthResource();
+
+  /** 每秒更新的目前時間，讓預估剩餘時間倒數 */
+  private readonly now = signal(Date.now());
 
   protected readonly missingTools = computed(() =>
     (this.health.value()?.tools ?? []).filter((tool) => !tool.available).map((tool) => tool.name),
@@ -75,6 +79,24 @@ export class App {
     }
     return Math.round((progress.completed / progress.total) * 100);
   });
+  /** 辨識階段的預估剩餘時間文字 */
+  protected readonly remainingText = computed(() => {
+    const run = this.run();
+    const progress = run?.progress();
+    if (!run || !progress) {
+      return '';
+    }
+    const ms = estimateRemainingMs(run.progressSamples(), progress.total, this.now());
+    if (ms === null) {
+      return '預估剩餘時間計算中';
+    }
+    return ms < 1000 ? '即將完成' : `預估剩餘 ${formatRemaining(ms)}`;
+  });
+
+  constructor() {
+    const timer = setInterval(() => this.now.set(Date.now()), 1000);
+    inject(DestroyRef).onDestroy(() => clearInterval(timer));
+  }
 
   protected onUrlInput(event: Event): void {
     this.url.set((event.target as HTMLInputElement).value);

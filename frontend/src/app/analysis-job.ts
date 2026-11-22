@@ -2,6 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { ApiError, toApiError } from './api-error';
+import { addProgressSample, ProgressSample } from './eta';
 
 export type AnalysisPhase = 'downloading' | 'splitting' | 'recognizing';
 
@@ -77,6 +78,7 @@ export class AnalysisRun {
   private readonly _status = signal<AnalysisStatus>('starting');
   private readonly _phase = signal<AnalysisPhase | null>(null);
   private readonly _progress = signal<AnalysisProgress | null>(null);
+  private readonly _progressSamples = signal<readonly ProgressSample[]>([]);
   private readonly _rows = signal<CuesheetRow[]>([]);
   private readonly _error = signal<ApiError | null>(null);
   private readonly _reconnecting = signal(false);
@@ -86,6 +88,8 @@ export class AnalysisRun {
   readonly status = this._status.asReadonly();
   readonly phase = this._phase.asReadonly();
   readonly progress = this._progress.asReadonly();
+  /** 最近幾次完成片段數增加的時間，用來預估剩餘時間 */
+  readonly progressSamples = this._progressSamples.asReadonly();
   /** 最新的曲目表；每次收到快照時整份替換 */
   readonly rows = this._rows.asReadonly();
   readonly error = this._error.asReadonly();
@@ -194,6 +198,9 @@ export class AnalysisRun {
         break;
       case 'progress':
         this._progress.set({ completed: event.completed, total: event.total });
+        this._progressSamples.update((samples) =>
+          addProgressSample(samples, { completed: event.completed, at: Date.now() }),
+        );
         break;
       case 'cuesheet':
         this._rows.set(event.cuesheet.rows);

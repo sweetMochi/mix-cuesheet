@@ -85,7 +85,7 @@
                 @if (run.phase() === 'recognizing' && run.progress(); as progress) {
                   <div class="progress-label">
                     <span>第 {{ progress.completed }}／{{ progress.total }} 段</span>
-                    <span class="muted">{{ progressPercent() }}%</span>
+                    <span class="muted">{{ progressPercent() }}%，{{ remainingText() }}</span>
                   </div>
                   <div
                     class="progress"
